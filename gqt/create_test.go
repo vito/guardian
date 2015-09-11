@@ -35,7 +35,7 @@ var _ = Describe("Creating a Container", func() {
 				Expect(filepath.Join(client.DepotDir, container.Handle(), "config.json")).To(BeARegularFile())
 			})
 
-			It("should support creating OCI container manually", func() {
+			PIt("should support creating OCI container manually", func() {
 				cmd := exec.Command(OciRuntimeBin)
 				cmd.Dir = filepath.Join(client.DepotDir, container.Handle())
 

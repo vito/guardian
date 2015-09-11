@@ -11,7 +11,10 @@ import (
 	"github.com/cloudfoundry-incubator/cf-lager"
 	"github.com/cloudfoundry-incubator/garden/server"
 	"github.com/cloudfoundry-incubator/guardian/gardener"
+	"github.com/cloudfoundry-incubator/guardian/loggingrunner"
 	"github.com/cloudfoundry-incubator/guardian/rundmc"
+	"github.com/cloudfoundry-incubator/guardian/rundmc/process_tracker"
+	"github.com/cloudfoundry/gunk/command_runner/linux_command_runner"
 	"github.com/nu7hatch/gouuid"
 	"github.com/pivotal-golang/lager"
 )
@@ -92,6 +95,12 @@ var allowNetworks = flag.String(
 	"CIDR blocks representing IPs to whitelist",
 )
 
+var iodaemonBin = flag.String(
+	"iodaemonBin",
+	"iodaemon",
+	"path to iodaemon binary",
+)
+
 var graphRoot = flag.String(
 	"graph",
 	"/var/lib/garden-docker-graph",
@@ -167,9 +176,22 @@ func main() {
 		missing("-depot")
 	}
 
+	if *iodaemonBin == "" {
+		missing("-iodaemonBin")
+	}
+
+	runner := &loggingrunner.Runner{
+		CommandRunner: linux_command_runner.New(),
+		Logger:        logger,
+	}
+
 	backend := &gardener.Gardener{
 		UidGenerator: gardener.UidGeneratorFunc(func() string { return mustStringify(uuid.NewV4()) }),
 		Containerizer: &rundmc.Containerizer{
+			ContainerRunner: &rundmc.RunRunc{
+				PidGenerator: &rundmc.SimplePidGenerator{},
+				Tracker:      process_tracker.New("/tmp/garden-pids", *iodaemonBin, runner),
+			},
 			Depot: &rundmc.DirectoryDepot{
 				Dir: *depotPath,
 			},

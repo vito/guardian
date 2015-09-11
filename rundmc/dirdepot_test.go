@@ -13,18 +13,40 @@ import (
 )
 
 var _ = Describe("Depot", func() {
+	var (
+		tmpDir string
+		depot  *rundmc.DirectoryDepot
+	)
+
+	BeforeEach(func() {
+		var err error
+
+		tmpDir, err = ioutil.TempDir("", "depot-test")
+		Expect(err).NotTo(HaveOccurred())
+
+		depot = &rundmc.DirectoryDepot{
+			Dir: tmpDir,
+		}
+	})
+
+	Describe("lookup", func() {
+		Context("when a subdirectory with the given name does not exist", func() {
+			It("returns an ErrDoesNotExist", func() {
+				_, err := depot.Lookup("potato")
+				Expect(err).To(MatchError(rundmc.ErrDoesNotExist))
+			})
+		})
+
+		Context("when a subdirectory with the given name exists", func() {
+			It("returns the absolute path of the directory", func() {
+				os.Mkdir(filepath.Join(tmpDir, "potato"), 0700)
+				Expect(depot.Lookup("potato")).To(Equal(filepath.Join(tmpDir, "potato")))
+			})
+		})
+	})
+
 	Describe("create", func() {
-		var tmpDir string
 		BeforeEach(func() {
-			var err error
-
-			tmpDir, err = ioutil.TempDir("", "depot-test")
-			Expect(err).NotTo(HaveOccurred())
-
-			depot := rundmc.DirectoryDepot{
-				Dir: tmpDir,
-			}
-
 			Expect(depot.Create("aardvaark")).To(Succeed())
 		})
 
@@ -45,8 +67,9 @@ var _ = Describe("Depot", func() {
 				Expect(json.NewDecoder(file).Decode(&target)).To(Succeed())
 
 				Expect(target.Process).To(Equal(specs.Process{
+					Terminal: true,
 					Args: []string{
-						"/bin/echo", "Pid 1 Running",
+						"/bin/sh", "-c", `echo "Pid 1 Running"; read`,
 					},
 				}))
 			})
