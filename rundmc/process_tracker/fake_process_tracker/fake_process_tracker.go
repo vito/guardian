@@ -42,7 +42,7 @@ type FakeProcessTracker struct {
 	ActiveProcessesStub        func() []garden.Process
 	activeProcessesMutex       sync.RWMutex
 	activeProcessesArgsForCall []struct{}
-	activeProcessesReturns     struct {
+	activeProcessesReturns struct {
 		result1 []garden.Process
 	}
 }

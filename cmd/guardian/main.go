@@ -18,6 +18,9 @@ import (
 	"github.com/cloudfoundry-incubator/goci/specs"
 	"github.com/cloudfoundry-incubator/guardian/gardener"
 	"github.com/cloudfoundry-incubator/guardian/kawasaki"
+	"github.com/cloudfoundry-incubator/guardian/kawasaki/configure"
+	"github.com/cloudfoundry-incubator/guardian/kawasaki/devices"
+	"github.com/cloudfoundry-incubator/guardian/kawasaki/netns"
 	"github.com/cloudfoundry-incubator/guardian/log"
 	"github.com/cloudfoundry-incubator/guardian/rundmc"
 	"github.com/cloudfoundry-incubator/guardian/rundmc/depot"
@@ -241,7 +244,29 @@ func wireStarter() *rundmc.Starter {
 }
 
 func wireNetworker() *kawasaki.Networker {
-	return kawasaki.New()
+	runner := &log.Runner{CommandRunner: linux_command_runner.New(), Logger: log.Session("runner")}
+
+	hostCfgApplier := &configure.Host{
+		Veth:   &devices.VethCreator{},
+		Link:   &devices.Link{Name: "guardian"},
+		Bridge: &devices.Bridge{},
+		Logger: log.Session("network-host-configurer"),
+	}
+
+	containerCfgApplier := &configure.Container{
+		Logger: log.Session("network-container-configurer"),
+		Link:   &devices.Link{Name: "guardian"},
+	}
+
+	return kawasaki.New(
+		kawasaki.NewManager(runner, "/var/run/netns"),
+		kawasaki.NewConfigCreator(),
+		kawasaki.NewConfigApplier(
+			hostCfgApplier,
+			containerCfgApplier,
+			&netns.Execer{},
+		),
+	)
 }
 
 func wireContainerizer(depotPath, iodaemonPath, defaultRootFSPath string) *rundmc.Containerizer {
