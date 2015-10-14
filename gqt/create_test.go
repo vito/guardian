@@ -14,22 +14,106 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gbytes"
 	"github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Creating a Container", func() {
 	var client *runner.RunningGarden
 	var container garden.Container
+	var rootFSPath string
 
-	Context("after creating a container", func() {
+	JustBeforeEach(func() {
+		client = startGarden()
+
+		var err error
+		container, err = client.Create(garden.ContainerSpec{
+			RootFSPath: rootFSPath,
+		})
+		Expect(err).NotTo(HaveOccurred())
+	})
+
+	FContext("with a specified RootFSPath", func() {
 		BeforeEach(func() {
-			client = startGarden()
-
-			var err error
-			container, err = client.Create(garden.ContainerSpec{})
-			Expect(err).NotTo(HaveOccurred())
+			rootFSPath = os.Getenv("GARDEN_TEST_ROOTFS")
 		})
 
+		It("should be able to run ls", func() {
+			buffer := gbytes.NewBuffer()
+			_, err := container.Run(garden.ProcessSpec{
+				Path: "ls",
+				Args: []string{"-1", "/"},
+			}, garden.ProcessIO{
+				Stdout: buffer,
+				Stderr: GinkgoWriter,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			Eventually(buffer).Should(gbytes.Say(`bin
+dev
+etc
+home
+lib
+lib64
+linuxrc
+media
+mnt
+opt
+packer-files
+proc
+root
+run
+sbin
+sys
+tmp
+usr
+var`))
+		})
+
+		Context("when a file is created", func() {
+			var fileName string
+
+			JustBeforeEach(func() {
+				fileName = fmt.Sprintf("report-%d.log", GinkgoParallelNode())
+
+				_, err := container.Run(garden.ProcessSpec{
+					Path: "touch",
+					Args: []string{fileName},
+				}, garden.ProcessIO{
+					Stderr: GinkgoWriter,
+				})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should not exists in the initial rootfs path", func() {
+				_, err := os.Stat(filepath.Join(rootFSPath, fileName))
+				Expect(os.IsNotExist(err)).To(BeTrue())
+			})
+
+			It("should not be shared with another containers", func() {
+				container2, err := client.Create(garden.ContainerSpec{
+					RootFSPath: rootFSPath,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				buffer := gbytes.NewBuffer()
+				_, err = container2.Run(garden.ProcessSpec{
+					Path: "ls",
+					Args: []string{"-1", "/"},
+				}, garden.ProcessIO{
+					Stdout: buffer,
+					Stderr: GinkgoWriter,
+				})
+				Expect(err).NotTo(HaveOccurred())
+				Eventually(buffer).ShouldNot(gbytes.Say(fileName))
+			})
+		})
+
+		Context("that's different to the default", func() {
+		})
+	})
+
+	Describe("after creating a container", func() {
 		It("should create a depot subdirectory based on the container handle", func() {
 			Expect(container.Handle()).NotTo(BeEmpty())
 			Expect(filepath.Join(client.DepotDir, container.Handle())).To(BeADirectory())
@@ -63,7 +147,7 @@ var _ = Describe("Creating a Container", func() {
 		Describe("destroying the container", func() {
 			var process garden.Process
 
-			BeforeEach(func() {
+			JustBeforeEach(func() {
 				var err error
 				process, err = container.Run(garden.ProcessSpec{
 					Path: "/bin/sh",
@@ -93,6 +177,7 @@ var _ = Describe("Creating a Container", func() {
 			})
 		})
 	})
+
 })
 
 func initProcessPID(handle string) int {

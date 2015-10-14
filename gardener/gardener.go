@@ -1,9 +1,11 @@
 package gardener
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/cloudfoundry-incubator/garden"
+	"github.com/concourse/baggageclaim/volume"
 	"github.com/pivotal-golang/lager"
 )
 
@@ -58,6 +60,11 @@ type Gardener struct {
 	// Networker creates a network for containers
 	Networker Networker
 
+	VolumeRepository volume.Repository
+
+	// StrategyProvider provides a root filesystem for containers
+	StrategyProvider volume.StrategyProvider
+
 	Logger lager.Logger
 }
 
@@ -73,9 +80,21 @@ func (g *Gardener) Create(spec garden.ContainerSpec) (garden.Container, error) {
 		return nil, err
 	}
 
+	strategy, err := g.StrategyProvider.ProvideStrategy(spec.RootFSPath)
+	if err != nil {
+		return nil, err
+	}
+
+	volume, err := g.VolumeRepository.CreateVolume(strategy, volume.Properties{}, 0)
+	fmt.Println("VOLUME ", volume.Path)
+	if err != nil {
+		return nil, err
+	}
+
 	if err := g.Containerizer.Create(log, DesiredContainerSpec{
 		Handle:      spec.Handle,
 		NetworkPath: networkPath,
+		RootFSPath:  volume.Path,
 	}); err != nil {
 		return nil, err
 	}

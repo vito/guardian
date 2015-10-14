@@ -29,6 +29,8 @@ import (
 	"github.com/cloudfoundry-incubator/guardian/rundmc/process_tracker"
 	"github.com/cloudfoundry-incubator/guardian/rundmc/runrunc"
 	"github.com/cloudfoundry/gunk/command_runner/linux_command_runner"
+	"github.com/concourse/baggageclaim/volume"
+	"github.com/concourse/baggageclaim/volume/driver"
 	"github.com/nu7hatch/gouuid"
 	"github.com/pivotal-golang/lager"
 )
@@ -208,12 +210,16 @@ func main() {
 		panic(err)
 	}
 
+	strategy, volumeRepo := wireStrategyProvider(logger, *graphRoot)
+
 	backend := &gardener.Gardener{
-		UidGenerator:  wireUidGenerator(),
-		Starter:       wireStarter(logger),
-		Networker:     wireNetworker(logger, networkPoolCIDR),
-		Containerizer: wireContainerizer(logger, *depotPath, *iodaemonBin, resolvedRootFSPath),
-		Logger:        logger,
+		UidGenerator:     wireUidGenerator(),
+		Starter:          wireStarter(logger),
+		Networker:        wireNetworker(logger, networkPoolCIDR),
+		Containerizer:    wireContainerizer(logger, *depotPath, *iodaemonBin, resolvedRootFSPath),
+		VolumeRepository: volumeRepo,
+		StrategyProvider: strategy,
+		Logger:           logger,
 	}
 
 	gardenServer := server.New(*listenNetwork, *listenAddr, *graceTime, backend, logger.Session("api"))
@@ -243,6 +249,24 @@ func main() {
 
 func wireUidGenerator() gardener.UidGeneratorFunc {
 	return gardener.UidGeneratorFunc(func() string { return mustStringify(uuid.NewV4()) })
+}
+
+func wireStrategyProvider(logger lager.Logger, volumeDir string) (volume.StrategyProvider, volume.Repository) {
+	volumeDriver := driver.NewBtrFSDriver(logger.Session("driver"))
+	filesystem, err := volume.NewFilesystem(volumeDriver, volumeDir)
+
+	if err != nil {
+		logger.Fatal("failed-to-initialize-filesystem", err)
+	}
+
+	locker := volume.NewLockManager()
+	volumeRepo := volume.NewRepository(
+		logger.Session("repository"),
+		filesystem,
+		locker,
+	)
+	runner := &logging.Runner{CommandRunner: linux_command_runner.New(), Logger: logger.Session("runner")}
+	return volume.NewGardenStrategyProvider(filesystem, runner), volumeRepo
 }
 
 func wireStarter(logger lager.Logger) *rundmc.Starter {

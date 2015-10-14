@@ -6,6 +6,8 @@ import (
 	"github.com/cloudfoundry-incubator/garden"
 	"github.com/cloudfoundry-incubator/guardian/gardener"
 	"github.com/cloudfoundry-incubator/guardian/gardener/fakes"
+	"github.com/concourse/baggageclaim/volume"
+	bcfakes "github.com/concourse/baggageclaim/volume/fakes"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
@@ -15,9 +17,11 @@ import (
 
 var _ = Describe("Gardener", func() {
 	var (
-		networker     *fakes.FakeNetworker
-		containerizer *fakes.FakeContainerizer
-		uidGenerator  *fakes.FakeUidGenerator
+		networker        *fakes.FakeNetworker
+		containerizer    *fakes.FakeContainerizer
+		uidGenerator     *fakes.FakeUidGenerator
+		strategyProvider *bcfakes.FakeStrategyProvider
+		volumeRepo       *bcfakes.FakeRepository
 
 		gdnr *gardener.Gardener
 	)
@@ -26,11 +30,16 @@ var _ = Describe("Gardener", func() {
 		containerizer = new(fakes.FakeContainerizer)
 		uidGenerator = new(fakes.FakeUidGenerator)
 		networker = new(fakes.FakeNetworker)
+		strategyProvider = new(bcfakes.FakeStrategyProvider)
+		volumeRepo = new(bcfakes.FakeRepository)
+
 		gdnr = &gardener.Gardener{
-			Containerizer: containerizer,
-			UidGenerator:  uidGenerator,
-			Networker:     networker,
-			Logger:        lagertest.NewTestLogger("test"),
+			Containerizer:    containerizer,
+			UidGenerator:     uidGenerator,
+			Networker:        networker,
+			StrategyProvider: strategyProvider,
+			VolumeRepository: volumeRepo,
+			Logger:           lagertest.NewTestLogger("test"),
 		}
 	})
 
@@ -69,6 +78,79 @@ var _ = Describe("Gardener", func() {
 				It("returns an error", func() {
 					_, err := gdnr.Create(garden.ContainerSpec{Handle: "bob"})
 					Expect(err).To(MatchError("booom!"))
+				})
+
+				It("does not create a container", func() {
+					gdnr.Create(garden.ContainerSpec{Handle: "bob"})
+					Expect(containerizer.CreateCallCount()).To(Equal(0))
+				})
+			})
+
+			It("passes the created volume path to the containerizer", func() {
+				volumeRepo.CreateVolumeReturns(volume.Volume{Path: "/path/to/banana/rootfs"}, nil)
+
+				_, err := gdnr.Create(garden.ContainerSpec{
+					Handle: "bob",
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(volumeRepo.CreateVolumeCallCount()).To(Equal(1))
+
+				Expect(containerizer.CreateCallCount()).To(Equal(1))
+				_, spec := containerizer.CreateArgsForCall(0)
+				Expect(spec.RootFSPath).To(Equal("/path/to/banana/rootfs"))
+			})
+
+			Context("when the VolumeRepository fails", func() {
+				BeforeEach(func() {
+					volumeRepo.CreateVolumeStub = func(_ volume.Strategy,
+						_ volume.Properties, _ uint) (volume.Volume, error) {
+						return volume.Volume{}, errors.New("Explode!")
+					}
+				})
+
+				It("returns a sensible error", func() {
+					_, err := gdnr.Create(garden.ContainerSpec{
+						Handle: "bob",
+					})
+					Expect(err).To(MatchError(("Explode!")))
+				})
+
+				It("does not create a container", func() {
+					gdnr.Create(garden.ContainerSpec{Handle: "bob"})
+					Expect(containerizer.CreateCallCount()).To(Equal(0))
+				})
+			})
+
+			It("correctly delegates to the strategyProvider", func() {
+				strategy := volume.EmptyStrategy{}
+
+				strategyProvider.ProvideStrategyReturns(strategy, nil)
+
+				_, err := gdnr.Create(garden.ContainerSpec{
+					Handle:     "bob",
+					RootFSPath: "/orig/rootfs",
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(strategyProvider.ProvideStrategyCallCount()).To(Equal(1))
+				Expect(strategyProvider.ProvideStrategyArgsForCall(0)).To(Equal("/orig/rootfs"))
+
+				Expect(volumeRepo.CreateVolumeCallCount()).To(Equal(1))
+				actualStrategy, _, _ := volumeRepo.CreateVolumeArgsForCall(0)
+				Expect(actualStrategy).To(Equal(strategy))
+			})
+
+			Context("when the StrategyProvider fails", func() {
+				BeforeEach(func() {
+					strategyProvider.ProvideStrategyReturns(nil, errors.New("So many wombles!"))
+				})
+
+				It("returns a sensible error", func() {
+					_, err := gdnr.Create(garden.ContainerSpec{
+						Handle: "bob",
+					})
+					Expect(err).To(MatchError("So many wombles!"))
 				})
 
 				It("does not create a container", func() {
