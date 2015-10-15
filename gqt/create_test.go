@@ -33,6 +33,10 @@ var _ = Describe("Creating a Container", func() {
 		Expect(err).NotTo(HaveOccurred())
 	})
 
+	Context("with the default RootFSPath", func() {
+
+	})
+
 	FContext("with a specified RootFSPath", func() {
 		BeforeEach(func() {
 			rootFSPath = os.Getenv("GARDEN_TEST_ROOTFS")
@@ -40,7 +44,7 @@ var _ = Describe("Creating a Container", func() {
 
 		It("should be able to run ls", func() {
 			buffer := gbytes.NewBuffer()
-			_, err := container.Run(garden.ProcessSpec{
+			process, err := container.Run(garden.ProcessSpec{
 				Path: "ls",
 				Args: []string{"-1", "/"},
 			}, garden.ProcessIO{
@@ -49,7 +53,11 @@ var _ = Describe("Creating a Container", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 
-			Eventually(buffer).Should(gbytes.Say(`bin
+			exitStatus, err := process.Wait()
+			Expect(err).ToNot(HaveOccurred())
+			Expect(exitStatus).To(Equal(0))
+
+			Expect(buffer).To(gbytes.Say(`bin
 dev
 etc
 home
@@ -76,18 +84,23 @@ var`))
 			JustBeforeEach(func() {
 				fileName = fmt.Sprintf("report-%d.log", GinkgoParallelNode())
 
-				_, err := container.Run(garden.ProcessSpec{
+				process, err := container.Run(garden.ProcessSpec{
 					Path: "touch",
 					Args: []string{fileName},
 				}, garden.ProcessIO{
 					Stderr: GinkgoWriter,
 				})
 				Expect(err).NotTo(HaveOccurred())
+
+				exitStatus, err := process.Wait()
+				Expect(err).ToNot(HaveOccurred())
+				Expect(exitStatus).To(Equal(0))
 			})
 
-			It("should not exists in the initial rootfs path", func() {
-				_, err := os.Stat(filepath.Join(rootFSPath, fileName))
-				Expect(os.IsNotExist(err)).To(BeTrue())
+			It("should not exist in the initial rootfs path", func() {
+				filePath := filepath.Join(rootFSPath, fileName)
+				_, err := os.Stat(filePath)
+				Expect(err).ToNot(BeNil())
 			})
 
 			It("should not be shared with another containers", func() {
@@ -97,7 +110,7 @@ var`))
 				Expect(err).NotTo(HaveOccurred())
 
 				buffer := gbytes.NewBuffer()
-				_, err = container2.Run(garden.ProcessSpec{
+				process, err := container2.Run(garden.ProcessSpec{
 					Path: "ls",
 					Args: []string{"-1", "/"},
 				}, garden.ProcessIO{
@@ -105,11 +118,13 @@ var`))
 					Stderr: GinkgoWriter,
 				})
 				Expect(err).NotTo(HaveOccurred())
-				Eventually(buffer).ShouldNot(gbytes.Say(fileName))
-			})
-		})
 
-		Context("that's different to the default", func() {
+				exitStatus, err := process.Wait()
+				Expect(err).ToNot(HaveOccurred())
+				Expect(exitStatus).To(Equal(0))
+
+				Expect(buffer).NotTo(gbytes.Say(fileName))
+			})
 		})
 	})
 
@@ -145,11 +160,9 @@ var`))
 		)
 
 		Describe("destroying the container", func() {
-			var process garden.Process
-
 			JustBeforeEach(func() {
 				var err error
-				process, err = container.Run(garden.ProcessSpec{
+				_, err = container.Run(garden.ProcessSpec{
 					Path: "/bin/sh",
 					Args: []string{
 						"-c", "read x",

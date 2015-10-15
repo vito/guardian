@@ -1,7 +1,6 @@
 package gardener
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/cloudfoundry-incubator/garden"
@@ -86,7 +85,6 @@ func (g *Gardener) Create(spec garden.ContainerSpec) (garden.Container, error) {
 	}
 
 	volume, err := g.VolumeRepository.CreateVolume(strategy, volume.Properties{}, 0)
-	fmt.Println("VOLUME ", volume.Path)
 	if err != nil {
 		return nil, err
 	}
