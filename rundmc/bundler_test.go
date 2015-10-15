@@ -28,4 +28,22 @@ var _ = Describe("Bundle", func() {
 			Expect(modifiedBundle.Spec.Process.Args).Should(ConsistOf("potato"))
 		})
 	})
+
+	FContext("when there is a RootFS path", func() {
+		It("should override the RootFSPath", func() {
+			base := goci.Bundle().WithRootFS("RootFS")
+			modifiedBundle := rundmc.BundleTemplate{Bndl: base}.Bundle(gardener.DesiredContainerSpec{
+				RootFSPath: "/my/root/fs/path",
+			})
+
+			Expect(modifiedBundle.Spec.Root.Path).To(Equal("/my/root/fs/path"))
+		})
+
+		It("does not modify the other fields", func() {
+			base := goci.Bundle().WithProcess(goci.Process("potato"))
+			modifiedBundle := rundmc.BundleTemplate{Bndl: base}.Bundle(gardener.DesiredContainerSpec{})
+			Expect(modifiedBundle.Spec.Process.Args).Should(ConsistOf("potato"))
+		})
+	})
+
 })
