@@ -37,7 +37,7 @@ var _ = Describe("Creating a Container", func() {
 
 	})
 
-	FContext("with a specified RootFSPath", func() {
+	Context("with a specified RootFSPath", func() {
 		BeforeEach(func() {
 			rootFSPath = os.Getenv("GARDEN_TEST_ROOTFS")
 		})

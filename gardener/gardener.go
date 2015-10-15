@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/cloudfoundry-incubator/garden"
-	"github.com/concourse/baggageclaim/volume"
 	"github.com/pivotal-golang/lager"
 )
 
@@ -18,6 +17,11 @@ type Containerizer interface {
 //go:generate counterfeiter . Networker
 type Networker interface {
 	Network(log lager.Logger, handle, spec string) (string, error)
+}
+
+//go:generate counterfeiter . VolumeCreator
+type VolumeCreator interface {
+	Create(path string) (string, error)
 }
 
 //go:generate counterfeiter . UidGenerator
@@ -59,10 +63,8 @@ type Gardener struct {
 	// Networker creates a network for containers
 	Networker Networker
 
-	VolumeRepository volume.Repository
-
-	// StrategyProvider provides a root filesystem for containers
-	StrategyProvider volume.StrategyProvider
+	// Volume creator create a root filesystem for containers
+	VolumeCreator VolumeCreator
 
 	Logger lager.Logger
 }
@@ -79,12 +81,7 @@ func (g *Gardener) Create(spec garden.ContainerSpec) (garden.Container, error) {
 		return nil, err
 	}
 
-	strategy, err := g.StrategyProvider.ProvideStrategy(spec.RootFSPath)
-	if err != nil {
-		return nil, err
-	}
-
-	volume, err := g.VolumeRepository.CreateVolume(strategy, volume.Properties{}, 0)
+	rootFsPath, err := g.VolumeCreator.Create(spec.RootFSPath)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +89,7 @@ func (g *Gardener) Create(spec garden.ContainerSpec) (garden.Container, error) {
 	if err := g.Containerizer.Create(log, DesiredContainerSpec{
 		Handle:      spec.Handle,
 		NetworkPath: networkPath,
-		RootFSPath:  volume.Path,
+		RootFSPath:  rootFsPath,
 	}); err != nil {
 		return nil, err
 	}

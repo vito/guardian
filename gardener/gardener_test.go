@@ -6,8 +6,6 @@ import (
 	"github.com/cloudfoundry-incubator/garden"
 	"github.com/cloudfoundry-incubator/guardian/gardener"
 	"github.com/cloudfoundry-incubator/guardian/gardener/fakes"
-	"github.com/concourse/baggageclaim/volume"
-	bcfakes "github.com/concourse/baggageclaim/volume/fakes"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gbytes"
@@ -17,11 +15,10 @@ import (
 
 var _ = Describe("Gardener", func() {
 	var (
-		networker        *fakes.FakeNetworker
-		containerizer    *fakes.FakeContainerizer
-		uidGenerator     *fakes.FakeUidGenerator
-		strategyProvider *bcfakes.FakeStrategyProvider
-		volumeRepo       *bcfakes.FakeRepository
+		networker     *fakes.FakeNetworker
+		containerizer *fakes.FakeContainerizer
+		uidGenerator  *fakes.FakeUidGenerator
+		volumeCreator *fakes.FakeVolumeCreator
 
 		gdnr *gardener.Gardener
 	)
@@ -30,16 +27,14 @@ var _ = Describe("Gardener", func() {
 		containerizer = new(fakes.FakeContainerizer)
 		uidGenerator = new(fakes.FakeUidGenerator)
 		networker = new(fakes.FakeNetworker)
-		strategyProvider = new(bcfakes.FakeStrategyProvider)
-		volumeRepo = new(bcfakes.FakeRepository)
+		volumeCreator = new(fakes.FakeVolumeCreator)
 
 		gdnr = &gardener.Gardener{
-			Containerizer:    containerizer,
-			UidGenerator:     uidGenerator,
-			Networker:        networker,
-			StrategyProvider: strategyProvider,
-			VolumeRepository: volumeRepo,
-			Logger:           lagertest.NewTestLogger("test"),
+			Containerizer: containerizer,
+			UidGenerator:  uidGenerator,
+			Networker:     networker,
+			VolumeCreator: volumeCreator,
+			Logger:        lagertest.NewTestLogger("test"),
 		}
 	})
 
@@ -87,26 +82,23 @@ var _ = Describe("Gardener", func() {
 			})
 
 			It("passes the created volume path to the containerizer", func() {
-				volumeRepo.CreateVolumeReturns(volume.Volume{Path: "/path/to/banana/rootfs"}, nil)
+				volumeCreator.CreateReturns("/path/to/banana/rootfs", nil)
 
 				_, err := gdnr.Create(garden.ContainerSpec{
 					Handle: "bob",
 				})
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(volumeRepo.CreateVolumeCallCount()).To(Equal(1))
+				Expect(volumeCreator.CreateCallCount()).To(Equal(1))
 
 				Expect(containerizer.CreateCallCount()).To(Equal(1))
 				_, spec := containerizer.CreateArgsForCall(0)
 				Expect(spec.RootFSPath).To(Equal("/path/to/banana/rootfs"))
 			})
 
-			Context("when the VolumeRepository fails", func() {
+			Context("when the VolumeCreator fails", func() {
 				BeforeEach(func() {
-					volumeRepo.CreateVolumeStub = func(_ volume.Strategy,
-						_ volume.Properties, _ uint) (volume.Volume, error) {
-						return volume.Volume{}, errors.New("Explode!")
-					}
+					volumeCreator.CreateReturns("", errors.New("Explode!"))
 				})
 
 				It("returns a sensible error", func() {
@@ -122,10 +114,8 @@ var _ = Describe("Gardener", func() {
 				})
 			})
 
-			It("correctly delegates to the strategyProvider", func() {
-				strategy := volume.EmptyStrategy{}
-
-				strategyProvider.ProvideStrategyReturns(strategy, nil)
+			It("correctly delegates to the volume creator", func() {
+				volumeCreator.CreateReturns("/translated/rootfs", nil)
 
 				_, err := gdnr.Create(garden.ContainerSpec{
 					Handle:     "bob",
@@ -133,30 +123,8 @@ var _ = Describe("Gardener", func() {
 				})
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(strategyProvider.ProvideStrategyCallCount()).To(Equal(1))
-				Expect(strategyProvider.ProvideStrategyArgsForCall(0)).To(Equal("/orig/rootfs"))
-
-				Expect(volumeRepo.CreateVolumeCallCount()).To(Equal(1))
-				actualStrategy, _, _ := volumeRepo.CreateVolumeArgsForCall(0)
-				Expect(actualStrategy).To(Equal(strategy))
-			})
-
-			Context("when the StrategyProvider fails", func() {
-				BeforeEach(func() {
-					strategyProvider.ProvideStrategyReturns(nil, errors.New("So many wombles!"))
-				})
-
-				It("returns a sensible error", func() {
-					_, err := gdnr.Create(garden.ContainerSpec{
-						Handle: "bob",
-					})
-					Expect(err).To(MatchError("So many wombles!"))
-				})
-
-				It("does not create a container", func() {
-					gdnr.Create(garden.ContainerSpec{Handle: "bob"})
-					Expect(containerizer.CreateCallCount()).To(Equal(0))
-				})
+				Expect(volumeCreator.CreateCallCount()).To(Equal(1))
+				Expect(volumeCreator.CreateArgsForCall(0)).To(Equal("/orig/rootfs"))
 			})
 
 			It("returns the container that Lookup would return", func() {

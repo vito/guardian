@@ -210,16 +210,13 @@ func main() {
 		panic(err)
 	}
 
-	strategy, volumeRepo := wireStrategyProvider(logger, *graphRoot)
-
 	backend := &gardener.Gardener{
-		UidGenerator:     wireUidGenerator(),
-		Starter:          wireStarter(logger),
-		Networker:        wireNetworker(logger, networkPoolCIDR),
-		Containerizer:    wireContainerizer(logger, *depotPath, *iodaemonBin, resolvedRootFSPath),
-		VolumeRepository: volumeRepo,
-		StrategyProvider: strategy,
-		Logger:           logger,
+		UidGenerator:  wireUidGenerator(),
+		Starter:       wireStarter(logger),
+		Networker:     wireNetworker(logger, networkPoolCIDR),
+		Containerizer: wireContainerizer(logger, *depotPath, *iodaemonBin),
+		VolumeCreator: wireVolumeCreator(logger, *graphRoot, resolvedRootFSPath),
+		Logger:        logger,
 	}
 
 	gardenServer := server.New(*listenNetwork, *listenAddr, *graceTime, backend, logger.Session("api"))
@@ -251,7 +248,7 @@ func wireUidGenerator() gardener.UidGeneratorFunc {
 	return gardener.UidGeneratorFunc(func() string { return mustStringify(uuid.NewV4()) })
 }
 
-func wireStrategyProvider(logger lager.Logger, volumeDir string) (volume.StrategyProvider, volume.Repository) {
+func wireVolumeCreator(logger lager.Logger, volumeDir, defaultRootFsPath string) volume.Creator {
 	volumeDriver := driver.NewBtrFSDriver(logger.Session("driver"))
 	filesystem, err := volume.NewFilesystem(volumeDriver, volumeDir)
 
@@ -265,8 +262,11 @@ func wireStrategyProvider(logger lager.Logger, volumeDir string) (volume.Strateg
 		filesystem,
 		locker,
 	)
+
 	runner := &logging.Runner{CommandRunner: linux_command_runner.New(), Logger: logger.Session("runner")}
-	return volume.NewGardenStrategyProvider(filesystem, runner), volumeRepo
+	provider := volume.NewGardenStrategyProvider(filesystem, runner)
+
+	return volume.NewCreator(provider, volumeRepo, defaultRootFsPath)
 }
 
 func wireStarter(logger lager.Logger) *rundmc.Starter {
@@ -302,7 +302,7 @@ func wireNetworker(log lager.Logger, networkPoolCIDR *net.IPNet) *kawasaki.Netwo
 	)
 }
 
-func wireContainerizer(log lager.Logger, depotPath, iodaemonPath, defaultRootFSPath string) *rundmc.Containerizer {
+func wireContainerizer(log lager.Logger, depotPath, iodaemonPath string) *rundmc.Containerizer {
 	depot := depot.New(depotPath)
 
 	startCheck := rundmc.StartChecker{Expect: "Pid 1 Running", Timeout: 3 * time.Second}
@@ -318,7 +318,6 @@ func wireContainerizer(log lager.Logger, depotPath, iodaemonPath, defaultRootFSP
 		WithNamespaces(PrivilegedContainerNamespaces...).
 		WithResources(&specs.Resources{}).
 		WithMounts(goci.Mount{Name: "proc", Type: "proc", Source: "proc", Destination: "/proc"}).
-		WithRootFS(defaultRootFSPath).
 		WithProcess(goci.Process("/bin/sh", "-c", `echo "Pid 1 Running"; read x`))
 
 	return rundmc.New(depot, &rundmc.BundleTemplate{Bndl: baseBundle}, runcrunner, startCheck)
