@@ -3,6 +3,7 @@ package gqt_test
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,12 +15,63 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/gbytes"
 	"github.com/onsi/gomega/gexec"
 )
 
 var _ = Describe("Creating a Container", func() {
 	var client *runner.RunningGarden
 	var container garden.Container
+
+	FDescribe("Capabilities", func() {
+		Context("when container is privileged", func() {
+			BeforeEach(func() {
+				client = startGarden()
+
+				var err error
+				container, err = client.Create(garden.ContainerSpec{Privileged: true})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should have CAP_SYS_ADMIN capability", func() {
+				pid := initProcessPID(container.Handle())
+				stdout := gbytes.NewBuffer()
+				status, err := gexec.Start(exec.Command("cat", fmt.Sprintf("/proc/%d/status", pid)), io.MultiWriter(stdout, GinkgoWriter), GinkgoWriter)
+
+				Expect(err).NotTo(HaveOccurred())
+				Eventually(status).Should(gexec.Exit(0))
+
+				Expect(stdout).Should(gbytes.Say("CapInh:	00000000a80425fb"))
+				Expect(stdout).Should(gbytes.Say("CapPrm:	00000000a80425fb"))
+				Expect(stdout).Should(gbytes.Say("CapEff:	00000000a80425fb"))
+				Expect(stdout).Should(gbytes.Say("CapBnd:	00000000a80425fb"))
+			})
+		})
+
+		Context("when container is unprivileged", func() {
+			BeforeEach(func() {
+				client = startGarden()
+
+				var err error
+				container, err = client.Create(garden.ContainerSpec{Privileged: false})
+				Expect(err).NotTo(HaveOccurred())
+			})
+
+			It("should have CAP_SYS_ADMIN capability", func() {
+				pid := initProcessPID(container.Handle())
+				stdout := gbytes.NewBuffer()
+				status, err := gexec.Start(exec.Command("cat", fmt.Sprintf("/proc/%d/status", pid)), io.MultiWriter(stdout, GinkgoWriter), GinkgoWriter)
+
+				Expect(err).NotTo(HaveOccurred())
+				Eventually(status).Should(gexec.Exit(0))
+
+				Expect(stdout).Should(gbytes.Say("CapInh:	0000000000000000"))
+				Expect(stdout).Should(gbytes.Say("CapPrm:	0000003fffffffff"))
+				Expect(stdout).Should(gbytes.Say("CapEff:	0000003fffffffff"))
+				Expect(stdout).Should(gbytes.Say("CapBnd:	0000003fffffffff"))
+			})
+		})
+	})
 
 	Context("after creating a container without a specified handle", func() {
 		BeforeEach(func() {
