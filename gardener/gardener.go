@@ -43,6 +43,8 @@ type DesiredContainerSpec struct {
 
 	// Path to a Network Namespace to enter
 	NetworkPath string
+
+	Privileged bool
 }
 
 // Gardener orchestrates other components to implement the Garden API
@@ -77,6 +79,7 @@ func (g *Gardener) Create(spec garden.ContainerSpec) (garden.Container, error) {
 	if err := g.Containerizer.Create(log, DesiredContainerSpec{
 		Handle:      spec.Handle,
 		NetworkPath: networkPath,
+		Privileged:  spec.Privileged,
 	}); err != nil {
 		return nil, err
 	}

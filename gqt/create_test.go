@@ -3,6 +3,7 @@ package gqt_test
 import (
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,15 +19,23 @@ import (
 )
 
 var _ = Describe("Creating a Container", func() {
-	var client *runner.RunningGarden
-	var container garden.Container
+	var (
+		client    *runner.RunningGarden
+		spec      garden.ContainerSpec
+		container garden.Container
+	)
 
 	Context("after creating a container without a specified handle", func() {
 		BeforeEach(func() {
 			client = startGarden()
 
+			spec = garden.ContainerSpec{}
+		})
+
+		JustBeforeEach(func() {
 			var err error
-			container, err = client.Create(garden.ContainerSpec{})
+
+			container, err = client.Create(spec)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -67,10 +76,50 @@ var _ = Describe("Creating a Container", func() {
 			Entry("should place the container in to the MNT namespace", "mnt"),
 		)
 
+		It("should apply the correct capabilities", func() {
+			pid := initProcessPID(container.Handle())
+
+			contents, err := ioutil.ReadFile(filepath.Join("/", "proc", fmt.Sprintf("%d", pid), "status"))
+			Expect(err).NotTo(HaveOccurred())
+
+			lines := strings.Split(string(contents), "\n")
+			Expect(filterCaps(lines)).To(Equal([]string{
+				"CapInh:	00000000a80425fb",
+				"CapPrm:	00000000a80425fb",
+				"CapEff:	00000000a80425fb",
+				"CapBnd:	00000000a80425fb",
+			}))
+		})
+
+		Context("when the container is privileged", func() {
+			BeforeEach(func() {
+				spec.Privileged = true
+			})
+
+			It("should apply the correct capabilities", func() {
+				pid := initProcessPID(container.Handle())
+
+				contents, err := ioutil.ReadFile(filepath.Join("/", "proc", fmt.Sprintf("%d", pid), "status"))
+				Expect(err).NotTo(HaveOccurred())
+
+				lines := strings.Split(string(contents), "\n")
+				Expect(filterCaps(lines)).To(Equal([]string{
+					"CapInh:	0000003fffffffff",
+					"CapPrm:	0000003fffffffff",
+					"CapEff:	0000003fffffffff",
+					"CapBnd:	0000003fffffffff",
+				}))
+			})
+
+			PContext("when running a process inside the contianer a non-root user", func() {
+				It("should apply the correct capabilities", func() {})
+			})
+		})
+
 		Describe("destroying the container", func() {
 			var process garden.Process
 
-			BeforeEach(func() {
+			JustBeforeEach(func() {
 				var err error
 				process, err = container.Run(garden.ProcessSpec{
 					Path: "/bin/sh",
@@ -103,16 +152,7 @@ var _ = Describe("Creating a Container", func() {
 
 	Context("after creating a container with a specified handle", func() {
 		BeforeEach(func() {
-			client = startGarden()
-
-			var mySpec garden.ContainerSpec
-			mySpec = garden.ContainerSpec{
-				Handle: "containerA",
-			}
-
-			var err error
-			container, err = client.Create(mySpec)
-			Expect(err).NotTo(HaveOccurred())
+			spec.Handle = "containerA"
 		})
 
 		It("should lookup the right container for the handle", func() {
@@ -141,4 +181,16 @@ func initProcessPID(handle string) int {
 	}).Should(Succeed())
 
 	return state.Pid
+}
+
+func filterCaps(lines []string) []string {
+	var caps []string
+
+	for _, v := range lines {
+		if strings.HasPrefix(v, "Cap") {
+			caps = append(caps, v)
+		}
+	}
+
+	return caps
 }

@@ -61,6 +61,28 @@ var _ = Describe("Gardener", func() {
 				Expect(spec.NetworkPath).To(Equal("/path/to/netns/bob"))
 			})
 
+			It("passes the privileged flag to the containerizer", func() {
+				_, err := gdnr.Create(garden.ContainerSpec{
+					Handle:     "bob",
+					Privileged: true,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(containerizer.CreateCallCount()).To(Equal(1))
+				_, spec := containerizer.CreateArgsForCall(0)
+				Expect(spec.Privileged).To(BeTrue())
+
+				_, err = gdnr.Create(garden.ContainerSpec{
+					Handle:     "bob",
+					Privileged: false,
+				})
+				Expect(err).NotTo(HaveOccurred())
+
+				Expect(containerizer.CreateCallCount()).To(Equal(2))
+				_, spec = containerizer.CreateArgsForCall(1)
+				Expect(spec.Privileged).To(BeFalse())
+			})
+
 			Context("when networker fails", func() {
 				BeforeEach(func() {
 					networker.NetworkReturns("", errors.New("booom!"))
