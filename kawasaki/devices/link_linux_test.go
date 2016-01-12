@@ -192,7 +192,7 @@ var _ = Describe("Link Management", func() {
 					`,
 				), GinkgoWriter, GinkgoWriter)
 				Expect(err).ToNot(HaveOccurred())
-				Eventually(cmd).Should(gexec.Exit(0))
+				Eventually(cmd, "5s").Should(gexec.Exit(0))
 			})
 
 			It("Gets statistics from the interface", func() {

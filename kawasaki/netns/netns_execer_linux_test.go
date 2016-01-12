@@ -8,7 +8,7 @@ import (
 	"os/exec"
 
 	"github.com/cloudfoundry-incubator/guardian/kawasaki/netns"
-	"github.com/docker/libcontainer/netlink"
+	"github.com/vishvananda/netlink"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"

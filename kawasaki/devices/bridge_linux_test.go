@@ -89,6 +89,30 @@ var _ = Describe("Bridge Management", func() {
 		})
 	})
 
+	Describe("Add", func() {
+		Context("when the slave does not exist", func() {
+			It("returns the error", func() {
+				existingIfc, err := b.Create(name, ip, subnet)
+				Expect(err).ToNot(HaveOccurred())
+
+				slave := &net.Interface{Name: "does not exist"}
+				Expect(b.Add(existingIfc, slave)).To(MatchError("Link not found"))
+			})
+		})
+
+		Context("when the bridge does not exist", func() {
+			It("returns the error", func() {
+				interfaces, err := net.Interfaces()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(interfaces).NotTo(HaveLen(0))
+
+				slave := &interfaces[0]
+				bridge := &net.Interface{Name: "does not exist"}
+				Expect(b.Add(bridge, slave)).To(MatchError("Link not found"))
+			})
+		})
+	})
+
 	Describe("Destroy", func() {
 		Context("when the bridge exists", func() {
 			It("deletes it", func() {
