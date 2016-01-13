@@ -7,10 +7,10 @@ import (
 	"os/exec"
 
 	"github.com/cloudfoundry-incubator/guardian/kawasaki/devices"
-	"github.com/docker/libcontainer/netlink"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
+	"github.com/vishvananda/netlink"
 )
 
 var _ = Describe("Link Management", func() {
@@ -26,7 +26,12 @@ var _ = Describe("Link Management", func() {
 		Eventually(cmd).Should(gexec.Exit(0))
 
 		name = fmt.Sprintf("gdn-test-%d", GinkgoParallelNode())
-		Expect(netlink.NetworkLinkAdd(name, "dummy")).To(Succeed())
+		link := &netlink.GenericLink{
+			LinkAttrs: netlink.LinkAttrs{Name: name},
+			LinkType:  "dummy",
+		}
+
+		Expect(netlink.LinkAdd(link)).To(Succeed())
 		intf, _ = net.InterfaceByName(name)
 	})
 

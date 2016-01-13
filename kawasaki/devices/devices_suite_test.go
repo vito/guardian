@@ -3,9 +3,9 @@ package devices_test
 import (
 	"net"
 
-	"github.com/docker/libcontainer/netlink"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
+	"github.com/vishvananda/netlink"
 
 	"testing"
 )
@@ -17,7 +17,11 @@ func TestDevices(t *testing.T) {
 
 func cleanup(intfName string) error {
 	if _, err := net.InterfaceByName(intfName); err == nil {
-		return netlink.NetworkLinkDel(intfName)
+		link, err := netlink.LinkByName(intfName)
+		if err != nil {
+			return err
+		}
+		return netlink.LinkDel(link)
 	}
 	return nil
 }
