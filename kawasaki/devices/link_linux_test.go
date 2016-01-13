@@ -38,15 +38,24 @@ var _ = Describe("Link Management", func() {
 		Context("when the interface exists", func() {
 			It("adds the IP succesffuly", func() {
 				ip, subnet, _ := net.ParseCIDR("1.2.3.4/5")
+				Expect(l.AddIP(&net.Interface{Name: "something"}, ip, subnet)).To(MatchError("devices: Link not found"))
+			})
+		})
+
+		Context("when the interface does not exist", func() {
+			It("returns the error", func() {
+
+				ip, subnet, _ := net.ParseCIDR("1.2.3.4/5")
 				Expect(l.AddIP(intf, ip, subnet)).To(Succeed())
+			})
+		})
+	})
 
-				intf, err := net.InterfaceByName(name)
-				Expect(err).ToNot(HaveOccurred())
-				addrs, err := intf.Addrs()
-				Expect(err).ToNot(HaveOccurred())
-
-				Expect(addrs).To(HaveLen(1))
-				Expect(addrs[0].String()).To(Equal("1.2.3.4/5"))
+	Describe("AddDefaultGW", func() {
+		Context("when the interface does not exist", func() {
+			It("returns the error", func() {
+				ip := net.ParseIP("1.2.3.4")
+				Expect(l.AddDefaultGW(&net.Interface{Name: "something"}, ip)).To(MatchError("devices: Link not found"))
 			})
 		})
 	})
@@ -54,7 +63,7 @@ var _ = Describe("Link Management", func() {
 	Describe("SetUp", func() {
 		Context("when the interface does not exist", func() {
 			It("returns an error", func() {
-				Expect(l.SetUp(&net.Interface{Name: "something"})).ToNot(Succeed())
+				Expect(l.SetUp(&net.Interface{Name: "something"})).To(MatchError("devices: Link not found"))
 			})
 		})
 
@@ -85,7 +94,7 @@ var _ = Describe("Link Management", func() {
 	Describe("SetMTU", func() {
 		Context("when the interface does not exist", func() {
 			It("returns an error", func() {
-				Expect(l.SetMTU(&net.Interface{Name: "something"}, 1234)).ToNot(Succeed())
+				Expect(l.SetMTU(&net.Interface{Name: "something"}, 1234)).To(MatchError("devices: Link not found"))
 			})
 		})
 
@@ -134,7 +143,12 @@ var _ = Describe("Link Management", func() {
 			session, err := gexec.Start(exec.Command("sh", "-c", fmt.Sprintf("ip netns exec gdnsetnstest ifconfig %s", name)), GinkgoWriter, GinkgoWriter)
 			Expect(err).ToNot(HaveOccurred())
 			Eventually(session).Should(gexec.Exit(0))
+		})
 
+		Context("when the interface does not exist", func() {
+			It("returns the error", func() {
+				Expect(l.SetNs(&net.Interface{Name: "something"}, 1234)).To(MatchError("devices: Link not found"))
+			})
 		})
 	})
 
