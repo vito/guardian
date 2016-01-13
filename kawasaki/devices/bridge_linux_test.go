@@ -67,6 +67,14 @@ var _ = Describe("Bridge Management", func() {
 				Expect(err).ToNot(HaveOccurred())
 			})
 
+			Context("when the bridge is duplicated", func() {
+				It("returns the interface", func() {
+					infc, err := b.Create(name, ip, subnet)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(infc).To(Equal(existingIfc))
+				})
+			})
+
 			It("returns the interface for it", func() {
 				ifc, err := b.Create(name, ip, subnet)
 				Expect(err).ToNot(HaveOccurred())
