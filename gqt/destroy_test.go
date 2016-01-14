@@ -15,7 +15,7 @@ import (
 	"github.com/onsi/gomega/gexec"
 )
 
-var _ = Describe("Destroying a Container", func() {
+var _ = FDescribe("Destroying a Container", func() {
 	var (
 		client    *runner.RunningGarden
 		container garden.Container
@@ -105,10 +105,15 @@ var _ = Describe("Destroying a Container", func() {
 			Expect(client.Destroy(existingContainer.Handle())).To(Succeed())
 		})
 
+		//TODO This flakes
 		It("should remove iptable entries", func() {
 			out, err := exec.Command("iptables", "-S", "-t", "filter").CombinedOutput()
-			Expect(err).NotTo(HaveOccurred())
-			Expect(string(out)).NotTo(ContainSubstring("177.100.10.0/24"))
+			Expect(err).NotTo(HaveOccurred()) // This might have happened once? But not in my runs. Story says "exit status 4"
+			// Because this line fails. But only when run concurrently?
+			//Expect(string(out)).NotTo(ContainSubstring("177.100.10.0/24"))
+			// it contained "       -A w-3-instance-a7mlnf5phpf -s 177.100.10.0/24 -d 177.100.10.0/24 -j ACCEPT"
+			// Possible fix: make this check for "w-{GinkgoParallelNode}-instance.* 177.100.10.0/24" ?
+			Expect(string(out)).NotTo(MatchRegexp("w-%d-instance.* 177.100.10.0/24", GinkgoParallelNode()))
 			Expect(string(out)).To(ContainSubstring("168.100.20.0/24"))
 		})
 
@@ -137,6 +142,7 @@ var _ = Describe("Destroying a Container", func() {
 			Eventually(session).Should(gexec.Exit(0))
 		})
 
+		//TODO This flakes
 		It("should remove the network bridge", func() {
 			session, err := gexec.Start(
 				exec.Command("ifconfig"),
@@ -150,7 +156,12 @@ var _ = Describe("Destroying a Container", func() {
 				GinkgoWriter, GinkgoWriter,
 			)
 			Expect(err).NotTo(HaveOccurred())
-			Eventually(session).Should(gbytes.Say("168-100-20-0"))
+			//TODO check the conflict between Julz' commit here:
+			//Eventually(session).Should(gbytes.Say("168-100-20-0"))
+			// ...and my branch below:
+			// ...because the following assert fails. But only when run concurrently?
+			// Test bug?
+			Eventually(session).Should(gbytes.Say("br-168-100-20-0"))
 		})
 	})
 })
