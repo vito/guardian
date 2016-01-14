@@ -64,7 +64,7 @@ var _ = FDescribe("Destroying a Container", func() {
 				return sess.ExitCode()
 			}
 
-			Eventually(killExitCode, "5s").Should(Equal(1))
+			Eventually(killExitCode).Should(Equal(1))
 		})
 
 		It("should destroy the container's depot directory", func() {
@@ -113,7 +113,7 @@ var _ = FDescribe("Destroying a Container", func() {
 			//Expect(string(out)).NotTo(ContainSubstring("177.100.10.0/24"))
 			// it contained "       -A w-3-instance-a7mlnf5phpf -s 177.100.10.0/24 -d 177.100.10.0/24 -j ACCEPT"
 			// Possible fix: make this check for "w-{GinkgoParallelNode}-instance.* 177.100.10.0/24" ?
-			Expect(string(out)).NotTo(MatchRegexp("w-%d-instance.* 177.100.10.0/24", GinkgoParallelNode()))
+			Expect(string(out)).NotTo(MatchRegexp("g-%d-instance.* 177.100.10.0/24", GinkgoParallelNode()))
 			Expect(string(out)).To(ContainSubstring("168.100.20.0/24"))
 		})
 
@@ -149,7 +149,7 @@ var _ = FDescribe("Destroying a Container", func() {
 				GinkgoWriter, GinkgoWriter,
 			)
 			Expect(err).NotTo(HaveOccurred())
-			Consistently(session).ShouldNot(gbytes.Say("177-100-10-0"))
+			Consistently(session).ShouldNot(gbytes.Say("g%d177-100-10-0", GinkgoParallelNode()))
 
 			session, err = gexec.Start(
 				exec.Command("ifconfig"),
@@ -161,7 +161,7 @@ var _ = FDescribe("Destroying a Container", func() {
 			// ...and my branch below:
 			// ...because the following assert fails. But only when run concurrently?
 			// Test bug?
-			Eventually(session).Should(gbytes.Say("br-168-100-20-0"))
+			Eventually(session).Should(gbytes.Say("g%d168-100-20-0", GinkgoParallelNode()))
 		})
 	})
 })
