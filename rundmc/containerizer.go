@@ -18,6 +18,7 @@ import (
 //go:generate counterfeiter . BundleRunner
 //go:generate counterfeiter . NstarRunner
 //go:generate counterfeiter . ContainerStater
+//go:generate counterfeiter . PivotRootDirMaker
 
 type Depot interface {
 	Create(log lager.Logger, handle string, bundle depot.BundleSaver) error
