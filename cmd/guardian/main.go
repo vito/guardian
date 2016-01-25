@@ -484,6 +484,10 @@ func wireContainerizer(log lager.Logger, depotPath, iodaemonPath, nstarPath, tar
 		specs.Device{Path: "/dev/pts/ptmx", Type: 'c', Major: 5, Minor: 2, UID: 0, GID: 0, Permissions: "rwm", FileMode: 0666},
 	)
 
+	baseBundle.Spec.Linux.Capabilities = []string{
+		"CAP_CHOWN",
+	}
+
 	maxId := uint32(sysinfo.Min(sysinfo.MustGetMaxValidUID(), sysinfo.MustGetMaxValidGID()))
 	idMappings := []specs.IDMapping{
 		{
@@ -504,13 +508,17 @@ func wireContainerizer(log lager.Logger, depotPath, iodaemonPath, nstarPath, tar
 				PrivilegedBase:   baseBundle,
 				UnprivilegedBase: baseBundle.WithNamespace(goci.UserNamespace).WithUIDMappings(idMappings...).WithGIDMappings(idMappings...),
 			},
-			rundmc.RootFSRule{},
+			rundmc.RootFSRule{
+				ContainerRootUID: int(maxId),
+				ContainerRootGID: int(maxId),
+				MkdirChowner:     rundmc.MkdirChownFunc(rundmc.MkdirChown),
+			},
 			rundmc.NetworkHookRule{LogFilePattern: filepath.Join(depotPath, "%s", "network.log")},
 		},
 	}
 
 	nstar := rundmc.NewNstarRunner(nstarPath, tarPath, linux_command_runner.New())
-	return rundmc.New(depot, template, rundmc.PivotRootDirMakerAndChowner{int(maxId), int(maxId)}, runcrunner, startChecker, stateChecker, nstar)
+	return rundmc.New(depot, template, runcrunner, startChecker, stateChecker, nstar)
 }
 
 func missing(flagName string) {
