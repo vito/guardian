@@ -94,6 +94,21 @@ var _ = Describe("RootFSRule", func() {
 			Expect(gid).To(BeEquivalentTo(888))
 		})
 	})
+
+	// this is workaround for the /dev/shm existing before the container creation
+	// TODO this test needs to be written!!!!
+	It("deletes the /dev/shm", func() {
+		rule.Apply(goci.Bundle(), gardener.DesiredContainerSpec{
+			RootFSPath: "/path/to/banana",
+		})
+
+		Expect(fakeMkdirChowner.MkdirChownCallCount()).To(Equal(1))
+		path, perms, uid, gid := fakeMkdirChowner.MkdirChownArgsForCall(0)
+		Expect(path).To(Equal("/path/to/banana/.pivot_root"))
+		Expect(perms).To(Equal(os.FileMode(0700)))
+		Expect(uid).To(BeEquivalentTo(999))
+		Expect(gid).To(BeEquivalentTo(888))
+	})
 })
 
 var _ = Describe("NetworkHookRule", func() {

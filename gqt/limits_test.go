@@ -46,7 +46,22 @@ var _ = Describe("Limits", func() {
 					Expect(err).ToNot(HaveOccurred())
 					Expect(process.Wait()).ToNot(Equal(0))
 				})
+
 			})
+
+			Context("when the process writes just enough to /dev/shm/just-enough", func() {
+				It("is not killed", func() {
+					process, err := container.Run(garden.ProcessSpec{
+						User: "root",
+						Path: "dd",
+						Args: []string{"if=/dev/urandom", "of=/dev/shm/just-enough", "bs=1M", "count=60"},
+					}, ginkgoIO,
+					)
+					Expect(err).ToNot(HaveOccurred())
+					Expect(process.Wait()).To(Equal(0))
+				})
+			})
+
 		})
 	})
 })

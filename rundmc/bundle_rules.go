@@ -35,6 +35,7 @@ type RootFSRule struct {
 
 func (r RootFSRule) Apply(bndl *goci.Bndl, spec gardener.DesiredContainerSpec) *goci.Bndl {
 	r.MkdirChowner.MkdirChown(filepath.Join(spec.RootFSPath, ".pivot_root"), 0700, r.ContainerRootUID, r.ContainerRootGID)
+	os.Remove(filepath.Join(spec.RootFSPath, "dev", "shm"))
 	return bndl.WithRootFS(spec.RootFSPath)
 }
 
