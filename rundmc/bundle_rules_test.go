@@ -53,19 +53,22 @@ var _ = Describe("BaseTemplateRule", func() {
 	})
 })
 
-var _ = Describe("RootFSRule", func() {
+var _ = FDescribe("RootFSRule", func() {
 	var (
 		fakeMkdirChowner *fakes.FakeMkdirChowner
+		fakeDirRemover   *fakes.FakeDirRemover
 		rule             rundmc.RootFSRule
 	)
 
 	BeforeEach(func() {
 		fakeMkdirChowner = new(fakes.FakeMkdirChowner)
+		fakeDirRemover = new(fakes.FakeDirRemover)
 		rule = rundmc.RootFSRule{
 			ContainerRootUID: 999,
 			ContainerRootGID: 888,
 
 			MkdirChowner: fakeMkdirChowner,
+			DirRemover:   fakeDirRemover,
 		}
 	})
 
@@ -96,18 +99,15 @@ var _ = Describe("RootFSRule", func() {
 	})
 
 	// this is workaround for the /dev/shm existing before the container creation
-	// TODO this test needs to be written!!!!
-	It("deletes the /dev/shm", func() {
+	It("deletes the /dev/shm so that it can be created by runc with correct permissions", func() {
 		rule.Apply(goci.Bundle(), gardener.DesiredContainerSpec{
 			RootFSPath: "/path/to/banana",
 		})
 
-		Expect(fakeMkdirChowner.MkdirChownCallCount()).To(Equal(1))
-		path, perms, uid, gid := fakeMkdirChowner.MkdirChownArgsForCall(0)
-		Expect(path).To(Equal("/path/to/banana/.pivot_root"))
-		Expect(perms).To(Equal(os.FileMode(0700)))
-		Expect(uid).To(BeEquivalentTo(999))
-		Expect(gid).To(BeEquivalentTo(888))
+		Expect(fakeDirRemover.RemoveCallCount()).To(Equal(1))
+
+		name := fakeDirRemover.RemoveArgsForCall(0)
+		Expect(name).To(Equal("/path/to/banana/dev/shm"))
 	})
 })
 
