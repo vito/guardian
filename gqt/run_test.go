@@ -1,6 +1,7 @@
 package gqt_test
 
 import (
+	"fmt"
 	"io"
 
 	"github.com/cloudfoundry-incubator/garden"
@@ -35,7 +36,9 @@ var _ = Describe("Run", func() {
 				})
 			Expect(err).NotTo(HaveOccurred())
 
+			fmt.Println("ABOUT TO WAIT")
 			exitCode, err := proc.Wait()
+			fmt.Println("DONE WAITING")
 			Expect(err).NotTo(HaveOccurred())
 
 			for _, m := range matchers {
