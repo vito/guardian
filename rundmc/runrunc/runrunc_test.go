@@ -3,8 +3,10 @@ package runrunc_test
 import (
 	"encoding/json"
 	"errors"
+	"io/ioutil"
 	"os"
 	"os/exec"
+	"path"
 
 	"github.com/cloudfoundry-incubator/garden"
 	"github.com/cloudfoundry-incubator/goci"
@@ -264,6 +266,72 @@ var _ = Describe("RuncRunner", func() {
 							"PATH=/test",
 							"ENV_PROCESS_ID=1",
 						}))
+					})
+				})
+			})
+
+			Describe("working directory", func() {
+				It("passes the correct cwd to the spec", func() {
+					runner.Exec(
+						logger, "some/oci/container", "someid",
+						garden.ProcessSpec{Dir: "/home/dir"}, garden.ProcessIO{},
+					)
+					Expect(tracker.RunCallCount()).To(Equal(1))
+					Expect(spec.Cwd).To(Equal("/home/dir"))
+				})
+
+				Context("and the path is not a directory", func() {
+					var rootFsPath string
+
+					BeforeEach(func() {
+						var err error
+
+						rootFsPath, err = ioutil.TempDir("", "")
+						Expect(err).NotTo(HaveOccurred())
+
+						bundleLoader.LoadStub = func(path string) (*goci.Bndl, error) {
+							bndl := &goci.Bndl{}
+							bndl.Spec.Spec.Root.Path = rootFsPath
+							return bndl, nil
+						}
+					})
+
+					AfterEach(func() {
+						Expect(os.RemoveAll(rootFsPath)).To(Succeed())
+					})
+
+					It("passes a new directory to the spec", func() {
+						runner.Exec(
+							logger, "some/oci/container", "someid",
+							garden.ProcessSpec{Dir: "/home/dir"}, garden.ProcessIO{},
+						)
+						Expect(tracker.RunCallCount()).To(Equal(1))
+						Expect(spec.Cwd).To(Equal("/home/dir"))
+
+						Expect(path.Join(rootFsPath, spec.Cwd)).To(BeADirectory())
+					})
+
+					Context("but it exists", func() {
+						var filePath string
+
+						BeforeEach(func() {
+							filePath = path.Join(rootFsPath, "a_file")
+
+							_, err := os.Create(filePath)
+							Expect(err).NotTo(HaveOccurred())
+						})
+
+						AfterEach(func() {
+							Expect(os.Remove(filePath)).To(Succeed())
+						})
+
+						It("returns a sensible error", func() {
+							_, err := runner.Exec(
+								logger, "some/oci/container", "someid",
+								garden.ProcessSpec{Dir: "/a_file"}, garden.ProcessIO{},
+							)
+							Expect(err).To(MatchError("'/a_file' is not a directory"))
+						})
 					})
 				})
 			})

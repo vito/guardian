@@ -278,7 +278,7 @@ func main() {
 
 	resolvedRootFSPath, err := filepath.EvalSymlinks(*rootFSPath)
 	if err != nil {
-		panic(err)
+		panic(err)/**/
 	}
 
 	_, networkPoolCIDR, err := net.ParseCIDR(*networkPool)
@@ -302,7 +302,7 @@ func main() {
 
 	propManager := properties.NewManager()
 
-	var networker gardener.Networker = netplugin.New(*networkPlugin, strings.Split(*networkPluginExtraArgs, ",")...)
+	var networker gardener.Networker = netplugin.New(*networkPlugin, strings.Split(/**/*networkPluginExtraArgs, ",")...)
 	if *networkPlugin == "" {
 		networker = wireNetworker(logger, *kawasakiBin, *tag, networkPoolCIDR, externalIPAddr, ipt, interfacePrefix, chainPrefix, propManager)
 	}

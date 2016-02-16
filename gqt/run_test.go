@@ -87,6 +87,128 @@ var _ = Describe("Run", func() {
 		})
 	})
 
+	FDescribe("working directory", func() {
+		var container garden.Container
+
+		BeforeEach(func() {
+			var err error
+
+			client = startGarden()
+			container, err = client.Create(garden.ContainerSpec{})
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		Context("when the directory exists", func() {
+			It("should run a process using it as a current working directory", func() {
+				out := gbytes.NewBuffer()
+				proc, err := container.Run(
+					garden.ProcessSpec{
+						Path: "pwd",
+						Dir:  "/home/alice",
+						User: "alice",
+					},
+					garden.ProcessIO{
+						Stdout: io.MultiWriter(GinkgoWriter, out),
+						Stderr: io.MultiWriter(GinkgoWriter, out),
+					})
+				Expect(err).NotTo(HaveOccurred())
+
+				exitCode, err := proc.Wait()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(exitCode).To(Equal(0))
+
+				Expect(out).To(gbytes.Say("/home/alice"))
+			})
+
+			Context("and the user doesn't have permissions to it", func() {
+				It("should fail with 'permission denied'", func() {
+					out := gbytes.NewBuffer()
+					_, err := container.Run(
+						garden.ProcessSpec{
+							Path: "pwd",
+							Dir:  "/root",
+							User: "alice",
+						},
+						garden.ProcessIO{
+							Stdout: io.MultiWriter(GinkgoWriter, out),
+							Stderr: io.MultiWriter(GinkgoWriter, out),
+						})
+					Expect(err).To(MatchError("PermissionDenied"))
+
+					// exitCode, err := proc.Wait()
+					// Expect(err).NotTo(HaveOccurred())
+					// Expect(exitCode).To(Equal(0))
+				})
+			})
+		})
+
+		Context("when the directory doesn't exist", func() {
+			It("should create the dir and run a process in it", func() {
+				out := gbytes.NewBuffer()
+				proc, err := container.Run(
+					garden.ProcessSpec{
+						Path: "pwd",
+						Dir:  "/home/alice/notexist",
+						User: "alice",
+					},
+					garden.ProcessIO{
+						Stdout: io.MultiWriter(GinkgoWriter, out),
+						Stderr: io.MultiWriter(GinkgoWriter, out),
+					})
+				Expect(err).NotTo(HaveOccurred())
+
+				exitCode, err := proc.Wait()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(exitCode).To(Equal(0))
+
+				Expect(out).To(gbytes.Say("/home/alice/notexist"))
+			})
+
+			It("should create the dir with the correct ownership", func() {
+				out := gbytes.NewBuffer()
+				proc, err := container.Run(
+					garden.ProcessSpec{
+						Path: "stat",
+						Args: []string{"-f", "%u,%g", "."},
+						Dir:  "/home/alice/notexist",
+						User: "alice",
+					},
+					garden.ProcessIO{
+						Stdout: io.MultiWriter(GinkgoWriter, out),
+						Stderr: io.MultiWriter(GinkgoWriter, out),
+					})
+				Expect(err).NotTo(HaveOccurred())
+
+				exitCode, err := proc.Wait()
+				Expect(err).NotTo(HaveOccurred())
+				Expect(exitCode).To(Equal(0))
+
+				Expect(out).To(gbytes.Say("1001,1001"))
+			})
+
+			Context("and use doesn't have permissions to it", func() {
+				It("should fail with 'permission denied'", func() {
+					out := gbytes.NewBuffer()
+					_, err := container.Run(
+						garden.ProcessSpec{
+							Path: "pwd",
+							Dir:  "/root/a_dir",
+							User: "alice",
+						},
+						garden.ProcessIO{
+							Stdout: io.MultiWriter(GinkgoWriter, out),
+							Stderr: io.MultiWriter(GinkgoWriter, out),
+						})
+					Expect(err).To(MatchError("PermissionDenied"))
+
+					// exitCode, err := proc.Wait()
+					// Expect(err).NotTo(HaveOccurred())
+					// Expect(exitCode).To(Equal(0))
+				})
+			})
+		})
+	})
+
 	Describe("PATH env variable", func() {
 		var container garden.Container
 

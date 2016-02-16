@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"os"
 	"os/exec"
+	"path"
 	"strings"
 
 	"github.com/cloudfoundry-incubator/garden"
@@ -150,6 +152,11 @@ func (r *RunRunc) writeProcessJSON(bundlePath string, spec garden.ProcessSpec, w
 		return fmt.Errorf("empty rootfs path")
 	}
 
+	_, err = os.Stat(path.Join(rootFsPath, spec.Dir))
+	if err != nil {
+		os.MkdirAll(path.Join(rootFsPath, spec.Dir), 0777)
+	}
+
 	uid, gid, err := r.users.Lookup(rootFsPath, spec.User)
 	if err != nil {
 		return err
@@ -170,6 +177,7 @@ func (r *RunRunc) writeProcessJSON(bundlePath string, spec garden.ProcessSpec, w
 			UID: uid,
 			GID: gid,
 		},
+		Cwd: spec.Dir,
 	})
 }
 
