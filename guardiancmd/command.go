@@ -61,6 +61,7 @@ var DefaultCapabilities = []string{
 	"CAP_FSETID",
 	"CAP_FOWNER",
 	"CAP_MKNOD",
+	"CAP_NET_ADMIN",
 	"CAP_NET_RAW",
 	"CAP_SETGID",
 	"CAP_SETUID",
