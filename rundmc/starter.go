@@ -18,6 +18,16 @@ type Starter struct {
 	*CgroupStarter
 }
 
+const cgroupsHeader = "#subsys_name hierarchy num_cgroups enabled"
+
+type CgroupsFormatError struct {
+	Content string
+}
+
+func (err CgroupsFormatError) Error() string {
+	return fmt.Sprintf("unknown /proc/cgroups format: %s", err.Content)
+}
+
 func NewStarter(logger lager.Logger, procCgroupReader io.ReadCloser, procSelfCgroupReader io.ReadCloser, cgroupMountpoint string, runner command_runner.CommandRunner) *Starter {
 	return &Starter{
 		&CgroupStarter{
@@ -44,7 +54,7 @@ func (s *CgroupStarter) Start() error {
 	return s.mountCgroupsIfNeeded(s.Logger)
 }
 
-func (s *CgroupStarter) mountCgroupsIfNeeded(log lager.Logger) error {
+func (s *CgroupStarter) mountCgroupsIfNeeded(logger lager.Logger) error {
 	defer s.ProcCgroups.Close()
 	defer s.ProcSelfCgroups.Close()
 	if err := os.MkdirAll(s.CgroupPath, 0755); err != nil {
@@ -52,7 +62,9 @@ func (s *CgroupStarter) mountCgroupsIfNeeded(log lager.Logger) error {
 	}
 
 	if !s.isMountPoint(s.CgroupPath) {
-		s.mountTmpfsOnCgroupPath(s.CgroupPath)
+		s.mountTmpfsOnCgroupPath(logger, s.CgroupPath)
+	} else {
+		logger.Info("cgroups-tmpfs-already-mounted", lager.Data{"path": s.CgroupPath})
 	}
 
 	subsystemGroupings, err := s.subsystemGroupings()
@@ -62,18 +74,32 @@ func (s *CgroupStarter) mountCgroupsIfNeeded(log lager.Logger) error {
 
 	scanner := bufio.NewScanner(s.ProcCgroups)
 
-	scanner.Scan()
-	scanner.Scan() // ignore header
+	if !scanner.Scan() {
+		return CgroupsFormatError{Content: "(empty)"}
+	}
+
+	if _, err := fmt.Sscanf(scanner.Text(), cgroupsHeader); err != nil {
+		return CgroupsFormatError{Content: scanner.Text()}
+	}
 
 	for scanner.Scan() {
-		var cgroupInProcCgroups string
-		if n, err := fmt.Sscanf(scanner.Text(), "%s ", &cgroupInProcCgroups); err != nil || n != 1 {
+		var subsystem string
+		var skip, enabled int
+		n, err := fmt.Sscanf(scanner.Text(), "%s %d %d %d ", &subsystem, &skip, &skip, &enabled)
+		if err != nil || n != 4 {
+			return CgroupsFormatError{Content: scanner.Text()}
+		}
+
+		if enabled == 0 {
 			continue
 		}
 
-		cgroupsToMount := subsystemGroupings[cgroupInProcCgroups]
+		cgroupsToMount, found := subsystemGroupings[subsystem]
+		if !found {
+			cgroupsToMount = subsystem
+		}
 
-		if err := s.mountCgroup(log, path.Join(s.CgroupPath, cgroupInProcCgroups), cgroupsToMount); err != nil {
+		if err := s.mountCgroup(logger, path.Join(s.CgroupPath, subsystem), cgroupsToMount); err != nil {
 			return err
 		}
 	}
@@ -81,8 +107,15 @@ func (s *CgroupStarter) mountCgroupsIfNeeded(log lager.Logger) error {
 	return nil
 }
 
-func (s *CgroupStarter) mountTmpfsOnCgroupPath(path string) {
-	s.CommandRunner.Run(exec.Command("mount", "-t", "tmpfs", "-o", "uid=0,gid=0,mode=0755", "cgroup", path))
+func (s *CgroupStarter) mountTmpfsOnCgroupPath(log lager.Logger, path string) {
+	log = log.Session("cgroups-tmpfs-mounting", lager.Data{"path": path})
+
+	log.Info("started")
+	if err := s.CommandRunner.Run(exec.Command("mount", "-t", "tmpfs", "-o", "uid=0,gid=0,mode=0755", "cgroup", path)); err != nil {
+		log.Error("failed-to-mount", err)
+	} else {
+		log.Info("finished")
+	}
 }
 
 func (s *CgroupStarter) subsystemGroupings() (map[string]string, error) {
@@ -105,28 +138,29 @@ func (s *CgroupStarter) subsystemGroupings() (map[string]string, error) {
 	return groupings, scanner.Err()
 }
 
-func (s *CgroupStarter) mountCgroup(log lager.Logger, cgroupPath, subsystems string) error {
-	log = log.Session("setup-cgroup", lager.Data{
+func (s *CgroupStarter) mountCgroup(logger lager.Logger, cgroupPath, subsystems string) error {
+	logger = logger.Session("mount-cgroup", lager.Data{
 		"path":       cgroupPath,
 		"subsystems": subsystems,
 	})
 
-	log.Info("started")
-	defer log.Info("finished")
+	logger.Info("started")
 
 	if !s.isMountPoint(cgroupPath) {
 		if err := os.MkdirAll(cgroupPath, 0755); err != nil {
-			log.Error("mkdir-failed", err)
-			return err
+			return fmt.Errorf("mkdir '%s': %s", cgroupPath, err)
 		}
 
 		cmd := exec.Command("mount", "-n", "-t", "cgroup", "-o", subsystems, "cgroup", cgroupPath)
-		cmd.Stderr = logging.Writer(log.Session("mount-cgroup-cmd"))
+		cmd.Stderr = logging.Writer(logger.Session("mount-cgroup-cmd"))
 		if err := s.CommandRunner.Run(cmd); err != nil {
-			log.Error("mount-cgroup-failed", err)
-			return err
+			return fmt.Errorf("mounting subsystems '%s' in '%s': %s", subsystems, cgroupPath, err)
 		}
+	} else {
+		logger.Info("subsystems-already-mounted")
 	}
+
+	logger.Info("finished")
 
 	return nil
 }
