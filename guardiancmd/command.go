@@ -464,11 +464,11 @@ func (cmd *GuardianCommand) wireContainerizer(log lager.Logger, depotPath, iodae
 	}
 
 	privilegedMounts := append(mounts,
-		specs.Mount{Type: "proc", Source: "proc", Destination: "/proc", Options: []string{"nosuid", "noexec", "nodev"}},
+		specs.Mount{Type: "proc", Source: "proc", Destination: "/proc", Options: []string{"rprivate", "nosuid", "noexec", "nodev"}},
 	)
 
 	unprivilegedMounts := append(mounts,
-		specs.Mount{Type: "proc", Source: "proc", Destination: "/proc", Options: []string{"nosuid", "noexec", "nodev", "ro"}},
+		specs.Mount{Type: "proc", Source: "proc", Destination: "/proc", Options: []string{"rprivate", "nosuid", "noexec", "nodev", "ro"}},
 	)
 
 	rwm := "rwm"
