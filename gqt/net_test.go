@@ -53,8 +53,7 @@ var _ = Describe("Net", func() {
 		client = startGarden(args...)
 
 		container, err = client.Create(garden.ContainerSpec{
-			RootFSPath: runner.RootFSPath,
-			Network:    containerNetwork,
+			Network: containerNetwork,
 		})
 		Expect(err).NotTo(HaveOccurred())
 	})
@@ -137,8 +136,7 @@ var _ = Describe("Net", func() {
 			var err error
 			originContainer = container
 			container, err = client.Create(garden.ContainerSpec{
-				RootFSPath: runner.RootFSPath,
-				Network:    containerNetwork,
+				Network: containerNetwork,
 			})
 
 			Expect(err).NotTo(HaveOccurred())
@@ -191,18 +189,14 @@ var _ = Describe("Net", func() {
 
 		JustBeforeEach(func() {
 			var err error
-			otherContainer, err = client.Create(garden.ContainerSpec{
-				RootFSPath: runner.RootFSPath,
-			})
+			otherContainer, err = client.Create(garden.ContainerSpec{})
 			Expect(err).ToNot(HaveOccurred())
 
 			otherContainerIP = containerIP(otherContainer)
 
 			Expect(client.Destroy(otherContainer.Handle())).To(Succeed())
 
-			otherContainer, err = client.Create(garden.ContainerSpec{
-				RootFSPath: runner.RootFSPath,
-			})
+			otherContainer, err = client.Create(garden.ContainerSpec{})
 			Expect(err).ToNot(HaveOccurred())
 		})
 
@@ -293,6 +287,28 @@ var _ = Describe("Net", func() {
 
 			Eventually(func() *gexec.Session { return sendRequest(externalIP, actualHostPort).Wait() }).
 				Should(gbytes.Say(fmt.Sprintf("%d", actualContainerPort)))
+		})
+
+		Describe("allocating and releasing ports", func() {
+			BeforeEach(func() {
+				args = append(args, "--port-pool-size", "1")
+			})
+
+			It("releases ports after the container is destroyed", func() {
+				container2, err := client.Create(garden.ContainerSpec{})
+				Expect(err).NotTo(HaveOccurred())
+
+				_, _, err = container2.NetIn(0, 0)
+				Expect(err).NotTo(HaveOccurred())
+
+				_, _, err = container.NetIn(0, 0)
+				Expect(err).To(HaveOccurred())
+
+				Expect(client.Destroy(container2.Handle())).To(Succeed())
+
+				_, _, err = container.NetIn(0, 0)
+				Expect(err).NotTo(HaveOccurred())
+			})
 		})
 	})
 
@@ -413,6 +429,48 @@ var _ = Describe("Net", func() {
 			)
 		})
 	})
+
+	Describe("MTU size", func() {
+		BeforeEach(func() {
+			args = append(args, "--mtu", "6789")
+		})
+
+		AfterEach(func() {
+			err := client.Destroy(container.Handle())
+			Expect(err).ToNot(HaveOccurred())
+		})
+
+		Describe("container's network interface", func() {
+			It("has the correct MTU size", func() {
+				stdout := gbytes.NewBuffer()
+				stderr := gbytes.NewBuffer()
+
+				process, err := container.Run(garden.ProcessSpec{
+					User: "alice",
+					Path: "ifconfig",
+					Args: []string{containerIfName(container)},
+				}, garden.ProcessIO{
+					Stdout: stdout,
+					Stderr: stderr,
+				})
+				Expect(err).ToNot(HaveOccurred())
+				rc, err := process.Wait()
+				Expect(err).ToNot(HaveOccurred())
+				Expect(rc).To(Equal(0))
+
+				Expect(stdout.Contents()).To(ContainSubstring(" MTU:6789 "))
+			})
+		})
+
+		Describe("hosts's network interface for a container", func() {
+			It("has the correct MTU size", func() {
+				out, err := exec.Command("ifconfig", hostIfName(container)).Output()
+				Expect(err).ToNot(HaveOccurred())
+
+				Expect(out).To(ContainSubstring(" MTU:6789 "))
+			})
+		})
+	})
 })
 
 func externalIP(container garden.Container) string {
@@ -483,4 +541,16 @@ func getContent(filename string) func() []byte {
 		Expect(err).NotTo(HaveOccurred())
 		return bytes
 	}
+}
+
+func containerIfName(container garden.Container) string {
+	properties, err := container.Properties()
+	Expect(err).NotTo(HaveOccurred())
+	return properties["kawasaki.container-interface"]
+}
+
+func hostIfName(container garden.Container) string {
+	properties, err := container.Properties()
+	Expect(err).NotTo(HaveOccurred())
+	return properties["kawasaki.host-interface"]
 }

@@ -23,7 +23,6 @@ var _ = Describe("Networker", func() {
 		fakeSpecParser     *fakes.FakeSpecParser
 		fakeSubnetPool     *fake_subnet_pool.FakePool
 		fakeConfigCreator  *fakes.FakeConfigCreator
-		fakeConfigurer     *fakes.FakeConfigurer
 		fakeConfigStore    *fakes.FakeConfigStore
 		fakePortForwarder  *fakes.FakePortForwarder
 		fakePortPool       *fakes.FakePortPool
@@ -37,7 +36,6 @@ var _ = Describe("Networker", func() {
 	BeforeEach(func() {
 		fakeSpecParser = new(fakes.FakeSpecParser)
 		fakeSubnetPool = new(fake_subnet_pool.FakePool)
-		fakeConfigurer = new(fakes.FakeConfigurer)
 		fakeConfigCreator = new(fakes.FakeConfigCreator)
 		fakeConfigStore = new(fakes.FakeConfigStore)
 		fakePortForwarder = new(fakes.FakePortForwarder)
@@ -50,7 +48,6 @@ var _ = Describe("Networker", func() {
 			fakeSpecParser,
 			fakeSubnetPool,
 			fakeConfigCreator,
-			fakeConfigurer,
 			fakeConfigStore,
 			fakePortPool,
 			fakePortForwarder,
@@ -93,9 +90,13 @@ var _ = Describe("Networker", func() {
 			"kawasaki.dns-servers":         "8.8.8.8, 8.8.4.4",
 		}
 
-		fakeConfigStore.GetStub = func(handle, name string) (string, error) {
+		fakeConfigStore.GetStub = func(handle, name string) (string, bool) {
 			Expect(handle).To(Equal("some-handle"))
-			return config[name], nil
+			if val, ok := config[name]; ok {
+				return val, true
+			}
+
+			return "", false
 		}
 	})
 
@@ -238,7 +239,6 @@ var _ = Describe("Networker", func() {
 						fakeSpecParser,
 						fakeSubnetPool,
 						fakeConfigCreator,
-						fakeConfigurer,
 						fakeConfigStore,
 						fakePortPool,
 						fakePortForwarder,
@@ -323,6 +323,27 @@ var _ = Describe("Networker", func() {
 					fakeSubnetPool.ReleaseReturns(errors.New("oh no"))
 					Expect(networker.Destroy(logger, "some-handle")).To(MatchError("oh no"))
 				})
+			})
+		})
+
+		Describe("releasing ports", func() {
+			It("does nothing when no ports are stored in the config", func() {
+				Expect(networker.Destroy(logger, "some-handle")).To(Succeed())
+				Expect(fakePortPool.ReleaseCallCount()).To(Equal(0))
+			})
+
+			It("destroys any ports named in the config", func() {
+				config[gardener.MappedPortsKey] = `[{"HostPort": 123}, {"HostPort": 456}]`
+
+				Expect(networker.Destroy(logger, "some-handle")).To(Succeed())
+				Expect(fakePortPool.ReleaseCallCount()).To(Equal(2))
+				Expect(fakePortPool.ReleaseArgsForCall(0)).To(BeEquivalentTo(123))
+				Expect(fakePortPool.ReleaseArgsForCall(1)).To(BeEquivalentTo(456))
+			})
+
+			It("returns an error if the ports property is not valid JSON", func() {
+				config[gardener.MappedPortsKey] = `potato`
+				Expect(networker.Destroy(logger, "some-handle")).To(MatchError(ContainSubstring("invalid")))
 			})
 		})
 	})
@@ -465,12 +486,12 @@ var _ = Describe("Networker", func() {
 
 		Context("when handle does not exist", func() {
 			BeforeEach(func() {
-				fakeConfigStore.GetReturns("", errors.New("Handle does not exist"))
+				fakeConfigStore.GetReturns("", false)
 			})
 
 			It("returns an error", func() {
 				_, _, err := networker.NetIn(logger, "nonexistent", 0, 0)
-				Expect(err).To(MatchError("Handle does not exist"))
+				Expect(err).To(MatchError(ContainSubstring("property not found")))
 			})
 		})
 	})

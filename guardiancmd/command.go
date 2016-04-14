@@ -23,7 +23,6 @@ import (
 	"github.com/cloudfoundry-incubator/goci"
 	"github.com/cloudfoundry-incubator/guardian/gardener"
 	"github.com/cloudfoundry-incubator/guardian/kawasaki"
-	"github.com/cloudfoundry-incubator/guardian/kawasaki/factory"
 	"github.com/cloudfoundry-incubator/guardian/kawasaki/iptables"
 	"github.com/cloudfoundry-incubator/guardian/kawasaki/ports"
 	"github.com/cloudfoundry-incubator/guardian/kawasaki/subnets"
@@ -87,8 +86,7 @@ type GuardianCommand struct {
 		DebugBindIP   IPFlag `long:"debug-bind-ip"                   description:"Bind the debug server on the given IP."`
 		DebugBindPort uint16 `long:"debug-bind-port" default:"17013" description:"Bind the debug server to the given port."`
 
-		Tag            string `long:"tag" description:"Optional 2-character identifier used for namespacing global configuration."`
-		PropertiesPath string `long:"properties" description:"Path in which to store properties."`
+		Tag string `long:"tag" description:"Optional 2-character identifier used for namespacing global configuration."`
 	} `group:"Server Configuration"`
 
 	Containers struct {
@@ -131,6 +129,8 @@ type GuardianCommand struct {
 		ExternalIP    IPFlag `long:"external-ip"                     description:"IP address to use to reach container's mapped ports. Autodetected if not specified."`
 		PortPoolStart uint32 `long:"port-pool-start" default:"60000" description:"Start of the ephemeral port range used for mapped container ports."`
 		PortPoolSize  uint32 `long:"port-pool-size"  default:"5000"  description:"Size of the port pool used for mapped container ports."`
+
+		Mtu int `long:"mtu" default:"1500" description:"MTU size for container network interfaces."`
 
 		Plugin          FileFlag `long:"network-plugin"           description:"Path to network plugin binary."`
 		PluginExtraArgs []string `long:"network-plugin-extra-arg" description:"Extra argument to pass to the network plugin. Can be specified multiple times."`
@@ -304,8 +304,7 @@ func (cmd *GuardianCommand) wireNetworker(
 		kawasakiBin,
 		kawasaki.SpecParserFunc(kawasaki.ParseSpec),
 		subnets.NewPool(networkPoolCIDR),
-		kawasaki.NewConfigCreator(idGenerator, interfacePrefix, chainPrefix, externalIP, dnsServers),
-		factory.NewDefaultConfigurer(ipt),
+		kawasaki.NewConfigCreator(idGenerator, interfacePrefix, chainPrefix, externalIP, dnsServers, cmd.Network.Mtu),
 		propManager,
 		portPool,
 		iptables.NewPortForwarder(ipt),
@@ -457,12 +456,20 @@ func (cmd *GuardianCommand) wireContainerizer(log lager.Logger, depotPath, iodae
 	)
 
 	mounts := []specs.Mount{
-		{Type: "proc", Source: "proc", Destination: "/proc"},
+		{Type: "sysfs", Source: "sysfs", Destination: "/sys", Options: []string{"nosuid", "noexec", "nodev", "ro"}},
 		{Type: "tmpfs", Source: "tmpfs", Destination: "/dev/shm"},
 		{Type: "devpts", Source: "devpts", Destination: "/dev/pts",
 			Options: []string{"nosuid", "noexec", "newinstance", "ptmxmode=0666", "mode=0620"}},
 		{Type: "bind", Source: cmd.Bin.Init.Path(), Destination: "/tmp/garden-init", Options: []string{"bind"}},
 	}
+
+	privilegedMounts := append(mounts,
+		specs.Mount{Type: "proc", Source: "proc", Destination: "/proc", Options: []string{"nosuid", "noexec", "nodev"}},
+	)
+
+	unprivilegedMounts := append(mounts,
+		specs.Mount{Type: "proc", Source: "proc", Destination: "/proc", Options: []string{"nosuid", "noexec", "nodev", "ro"}},
+	)
 
 	rwm := "rwm"
 	character := "c"
@@ -489,19 +496,23 @@ func (cmd *GuardianCommand) wireContainerizer(log lager.Logger, depotPath, iodae
 	baseBundle := goci.Bundle().
 		WithNamespaces(PrivilegedContainerNamespaces...).
 		WithResources(&specs.Resources{Devices: append([]specs.DeviceCgroup{denyAll}, allowedDevices...)}).
-		WithMounts(mounts...).
 		WithRootFS(defaultRootFSPath).
 		WithProcess(baseProcess)
 
 	unprivilegedBundle := baseBundle.
 		WithNamespace(goci.UserNamespace).
 		WithUIDMappings(idMappings...).
-		WithGIDMappings(idMappings...)
+		WithGIDMappings(idMappings...).
+		WithMounts(unprivilegedMounts...)
+
+	privilegedBundle := baseBundle.
+		WithMounts(privilegedMounts...).
+		WithCapabilities(append(DefaultCapabilities, "CAP_SYS_ADMIN")...)
 
 	template := &rundmc.BundleTemplate{
 		Rules: []rundmc.BundlerRule{
 			bundlerules.Base{
-				PrivilegedBase:   baseBundle,
+				PrivilegedBase:   privilegedBundle,
 				UnprivilegedBase: unprivilegedBundle,
 			},
 			bundlerules.RootFS{
@@ -513,12 +524,11 @@ func (cmd *GuardianCommand) wireContainerizer(log lager.Logger, depotPath, iodae
 			bundlerules.Hooks{LogFilePattern: filepath.Join(depotPath, "%s", "network.log")},
 			bundlerules.BindMounts{},
 			bundlerules.Env{},
-			bundlerules.PrivilegedCaps{},
 		},
 	}
 
 	log.Info("base-bundles", lager.Data{
-		"privileged":   baseBundle,
+		"privileged":   privilegedBundle,
 		"unprivileged": unprivilegedBundle,
 	})
 

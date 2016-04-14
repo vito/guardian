@@ -68,7 +68,7 @@ type PropertyManager interface {
 	All(handle string) (props garden.Properties, err error)
 	Set(handle string, name string, value string)
 	Remove(handle string, name string) error
-	Get(handle string, name string) (string, error)
+	Get(handle string, name string) (string, bool)
 	MatchesAll(handle string, props garden.Properties) bool
 	DestroyKeySpace(string) error
 }
@@ -267,16 +267,25 @@ func (g *Gardener) lookup(handle string) garden.Container {
 	}
 }
 
-// Destroy idempotently destroys any resources associated with the given handle
 func (g *Gardener) Destroy(handle string) error {
 	log := g.Logger.Session("destroy", lager.Data{"handle": handle})
 
 	log.Info("start")
 	defer log.Info("destroyed")
 
+	handles, err := g.Containerizer.Handles()
+	if err != nil {
+		return err
+	}
+
+	if !g.exists(handles, handle) {
+		return garden.ContainerNotFoundError{Handle: handle}
+	}
+
 	return g.destroy(log, handle)
 }
 
+// destroy idempotently destroys any resources associated with the given handle
 func (g *Gardener) destroy(log lager.Logger, handle string) error {
 	if err := g.Containerizer.Destroy(g.Logger, handle); err != nil {
 		return err
@@ -296,13 +305,13 @@ func (g *Gardener) destroy(log lager.Logger, handle string) error {
 func (g *Gardener) Stop() {}
 
 func (g *Gardener) GraceTime(container garden.Container) time.Duration {
-	property, err := g.PropertyManager.Get(container.Handle(), GraceTimeKey)
-	if err != nil {
+	property, ok := g.PropertyManager.Get(container.Handle(), GraceTimeKey)
+	if !ok {
 		return 0
 	}
 
 	var graceTime time.Duration
-	_, err = fmt.Sscanf(property, "%d", &graceTime)
+	_, err := fmt.Sscanf(property, "%d", &graceTime)
 	if err != nil {
 		return 0
 	}
@@ -400,12 +409,22 @@ func (g *Gardener) checkDuplicateHandle(handle string) error {
 	if err != nil {
 		return err
 	}
+
+	if g.exists(handles, handle) {
+		return errors.New(fmt.Sprintf("Handle '%s' already in use", handle))
+	}
+
+	return nil
+}
+
+func (g *Gardener) exists(handles []string, handle string) bool {
 	for _, h := range handles {
 		if h == handle {
-			return errors.New(fmt.Sprintf("Handle '%s' already in use", handle))
+			return true
 		}
 	}
-	return nil
+
+	return false
 }
 
 func (g *Gardener) Start() error {

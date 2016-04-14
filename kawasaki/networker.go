@@ -28,14 +28,6 @@ const iptableInstanceKey = "kawasaki.iptable-inst"
 const mtuKey = "kawasaki.mtu"
 const dnsServerKey = "kawasaki.dns-servers"
 
-//go:generate counterfeiter . NetnsMgr
-
-type NetnsMgr interface {
-	Create(log lager.Logger, handle string) error
-	Lookup(log lager.Logger, handle string) (string, error)
-	Destroy(log lager.Logger, handle string) error
-}
-
 //go:generate counterfeiter . SpecParser
 
 type SpecParser interface {
@@ -59,13 +51,14 @@ type Configurer interface {
 
 type ConfigStore interface {
 	Set(handle string, name string, value string)
-	Get(handle string, name string) (string, error)
+	Get(handle string, name string) (string, bool)
 }
 
 //go:generate counterfeiter . PortPool
 
 type PortPool interface {
 	Acquire() (uint32, error)
+	Release(uint32)
 }
 
 //go:generate counterfeiter . PortForwarder
@@ -100,7 +93,6 @@ type Networker struct {
 	specParser     SpecParser
 	subnetPool     subnets.Pool
 	configCreator  ConfigCreator
-	configurer     Configurer
 	configStore    ConfigStore
 	portForwarder  PortForwarder
 	portPool       PortPool
@@ -113,7 +105,6 @@ func New(
 	specParser SpecParser,
 	subnetPool subnets.Pool,
 	configCreator ConfigCreator,
-	configurer Configurer,
 	configStore ConfigStore,
 	portPool PortPool,
 	portForwarder PortForwarder,
@@ -126,7 +117,6 @@ func New(
 		specParser:    specParser,
 		subnetPool:    subnetPool,
 		configCreator: configCreator,
-		configurer:    configurer,
 		configStore:   configStore,
 
 		portForwarder: portForwarder,
@@ -255,10 +245,12 @@ func (n *Networker) NetIn(log lager.Logger, handle string, externalPort, contain
 		return 0, 0, err
 	}
 
-	addPortMapping(log, n.configStore, handle, garden.PortMapping{
+	if err := addPortMapping(log, n.configStore, handle, garden.PortMapping{
 		HostPort:      externalPort,
 		ContainerPort: containerPort,
-	})
+	}); err != nil {
+		return 0, 0, err
+	}
 
 	return externalPort, containerPort, nil
 }
@@ -284,38 +276,40 @@ func (n *Networker) Destroy(log lager.Logger, handle string) error {
 		return err
 	}
 
+	if ports, ok := n.configStore.Get(handle, gardener.MappedPortsKey); ok {
+		mappings, err := portsFromJson(ports)
+		if err != nil {
+			return err
+		}
+
+		for _, m := range mappings {
+			n.portPool.Release(m.HostPort)
+		}
+	}
+
 	return nil
 }
 
-func addPortMapping(logger lager.Logger, configStore ConfigStore, handle string, newMapping garden.PortMapping) {
-	log := logger.Session("net-in", lager.Data{"handle": handle})
-
-	currentMappingsJson, err := configStore.Get(handle, gardener.MappedPortsKey)
-	if err != nil {
-		log.Debug("config-store-no-key-skipping")
+func addPortMapping(logger lager.Logger, configStore ConfigStore, handle string, newMapping garden.PortMapping) error {
+	var currentMappings portMappingList
+	if currentMappingsJson, ok := configStore.Get(handle, gardener.MappedPortsKey); ok {
+		var err error
+		currentMappings, err = portsFromJson(currentMappingsJson)
+		if err != nil {
+			return err
+		}
 	}
-
-	currentMappings := []garden.PortMapping{}
-
-	// If unmarshall fails, we get a default empty struct
-	json.Unmarshal([]byte(currentMappingsJson), &currentMappings)
 
 	updatedMappings := append(currentMappings, newMapping)
-	updatedMappingsJson, err := json.Marshal(updatedMappings)
-	if err != nil {
-		// Since the object we are marshalling here is always going to be
-		// valid, this would be a programming error
-		panic(err)
-	}
-
-	configStore.Set(handle, gardener.MappedPortsKey, string(updatedMappingsJson))
+	configStore.Set(handle, gardener.MappedPortsKey, updatedMappings.toJson())
+	return nil
 }
 
 func getAll(config ConfigStore, handle string, key ...string) (vals []string, err error) {
 	for _, k := range key {
-		v, err := config.Get(handle, k)
-		if err != nil {
-			return nil, err
+		v, ok := config.Get(handle, k)
+		if !ok {
+			return nil, fmt.Errorf("property not found: %s", k)
 		}
 
 		vals = append(vals, v)
@@ -396,4 +390,24 @@ func load(config ConfigStore, handle string) (NetworkConfig, error) {
 		Mtu:             mtu,
 		DNSServers:      dnsServers,
 	}, nil
+}
+
+type portMappingList []garden.PortMapping
+
+func (l portMappingList) toJson() string {
+	b, err := json.Marshal(l)
+	if err != nil {
+		panic(err) // impossible, since []PortMapping is always encodable
+	}
+
+	return string(b)
+}
+
+func portsFromJson(s string) (portMappingList, error) {
+	var mappings portMappingList
+	if err := json.Unmarshal([]byte(s), &mappings); err != nil {
+		return nil, err
+	}
+
+	return mappings, nil
 }

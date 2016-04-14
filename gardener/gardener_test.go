@@ -40,6 +40,9 @@ var _ = Describe("Gardener", func() {
 		sysinfoProvider = new(fakes.FakeSysInfoProvider)
 		propertyManager = new(fakes.FakePropertyManager)
 
+		propertyManager.GetReturns("", true)
+		containerizer.HandlesReturns([]string{"some-handle"}, nil)
+
 		gdnr = &gardener.Gardener{
 			SysInfoProvider: sysinfoProvider,
 			Containerizer:   containerizer,
@@ -541,7 +544,6 @@ var _ = Describe("Gardener", func() {
 			err = gdnr.Start()
 			Expect(err).NotTo(HaveOccurred())
 
-			Expect(containerizer.HandlesCallCount()).To(Equal(1))
 			Expect(containerizer.DestroyCallCount()).To(Equal(2))
 
 			_, handle := containerizer.DestroyArgsForCall(0)
@@ -677,6 +679,11 @@ var _ = Describe("Gardener", func() {
 	})
 
 	Describe("destroying a container", func() {
+		It("returns garden.ContainreNotFoundError if the container handle isn't in the depot", func() {
+			containerizer.HandlesReturns([]string{}, nil)
+			Expect(gdnr.Destroy("cake!")).To(MatchError(garden.ContainerNotFoundError{Handle: "cake!"}))
+		})
+
 		It("asks the containerizer to destroy the container", func() {
 			Expect(gdnr.Destroy("some-handle")).To(Succeed())
 			Expect(containerizer.DestroyCallCount()).To(Equal(1))
@@ -880,7 +887,6 @@ var _ = Describe("Gardener", func() {
 		var container garden.Container
 
 		var properties map[string]string
-		var propertyMgrErrors map[string]error
 
 		BeforeEach(func() {
 			var err error
@@ -888,10 +894,14 @@ var _ = Describe("Gardener", func() {
 			Expect(err).NotTo(HaveOccurred())
 
 			properties = make(map[string]string)
-			propertyMgrErrors = make(map[string]error)
-			propertyManager.GetStub = func(handle, key string) (string, error) {
+			properties[gardener.ContainerIPKey] = "1.2.3.4"
+			properties[gardener.BridgeIPKey] = "8.9.10.11"
+			properties[gardener.ExternalIPKey] = "4.5.6.7"
+
+			propertyManager.GetStub = func(handle, key string) (string, bool) {
 				Expect(handle).To(Equal("some-handle"))
-				return properties[key], propertyMgrErrors[key]
+				v, ok := properties[key]
+				return v, ok
 			}
 		})
 
@@ -903,56 +913,45 @@ var _ = Describe("Gardener", func() {
 		})
 
 		It("returns the garden.network.container-ip property from the propertyManager as the ContainerIP", func() {
-			properties[gardener.ContainerIPKey] = "1.2.3.4"
-
 			info, err := container.Info()
 			Expect(err).NotTo(HaveOccurred())
-
 			Expect(info.ContainerIP).To(Equal("1.2.3.4"))
 		})
 
 		Context("when getting the containerIP fails", func() {
 			It("should return the error", func() {
-				propertyMgrErrors[gardener.ContainerIPKey] = errors.New("spiderman-error")
-
+				delete(properties, gardener.ContainerIPKey)
 				_, err := container.Info()
-				Expect(err).To(MatchError("spiderman-error"))
+				Expect(err).To(MatchError(MatchRegexp("no property found.*container-ip")))
 			})
 		})
 
 		It("returns the garden.network.host-ip property from the propertyManager as the HostIP", func() {
-			properties[gardener.BridgeIPKey] = "1.2.3.4"
-
 			info, err := container.Info()
 			Expect(err).NotTo(HaveOccurred())
-
-			Expect(info.HostIP).To(Equal("1.2.3.4"))
+			Expect(info.HostIP).To(Equal("8.9.10.11"))
 		})
 
 		Context("when getting the hostIP fails", func() {
 			It("should return the error", func() {
-				propertyMgrErrors[gardener.BridgeIPKey] = errors.New("spiderman-error")
-
+				delete(properties, gardener.BridgeIPKey)
 				_, err := container.Info()
-				Expect(err).To(MatchError("spiderman-error"))
+				Expect(err).To(MatchError(MatchRegexp("no property found.*host-ip")))
 			})
 		})
 
 		It("returns the garden.network.external-ip property from the propertyManager as the ExternalIP", func() {
-			properties[gardener.ExternalIPKey] = "1.2.3.4"
-
 			info, err := container.Info()
 			Expect(err).NotTo(HaveOccurred())
-
-			Expect(info.ExternalIP).To(Equal("1.2.3.4"))
+			Expect(info.ExternalIP).To(Equal("4.5.6.7"))
 		})
 
 		Context("when getting the externalIP fails", func() {
 			It("should return the error", func() {
-				propertyMgrErrors[gardener.ExternalIPKey] = errors.New("spiderman-error")
+				delete(properties, gardener.ExternalIPKey)
 
 				_, err := container.Info()
-				Expect(err).To(MatchError("spiderman-error"))
+				Expect(err).To(MatchError(MatchRegexp("no property found.*external-ip")))
 			})
 		})
 
@@ -1004,7 +1003,7 @@ var _ = Describe("Gardener", func() {
 			propertyManager.GetReturns(`[
 			  {"HostPort":123,"ContainerPort":456},
 			  {"HostPort":789,"ContainerPort":321}
-			]`, nil)
+			]`, true)
 			info, err := container.Info()
 			Expect(err).NotTo(HaveOccurred())
 
@@ -1021,7 +1020,7 @@ var _ = Describe("Gardener", func() {
 
 		Context("when PropertyManager fails to get port mappings", func() {
 			It("should return empty port mapping list", func() {
-				propertyMgrErrors[gardener.MappedPortsKey] = errors.New("spiderman-error")
+				delete(properties, gardener.MappedPortsKey)
 
 				info, err := container.Info()
 				Expect(err).NotTo(HaveOccurred())
@@ -1080,12 +1079,12 @@ var _ = Describe("Gardener", func() {
 
 		Context("when info errors", func() {
 			It("returns the error", func() {
-				propertyManager.GetReturns("", errors.New("boom"))
+				propertyManager.GetReturns("", false)
 
 				infos, err := gdnr.BulkInfo([]string{"some-handle-1"})
 				Expect(err).NotTo(HaveOccurred())
 
-				Expect(infos["some-handle-1"].Err).To(MatchError("boom"))
+				Expect(infos["some-handle-1"].Err).To(MatchError(ContainSubstring("no property found")))
 			})
 		})
 	})
@@ -1239,7 +1238,7 @@ var _ = Describe("Gardener", func() {
 			BeforeEach(func() {
 				graceTime = time.Minute
 
-				propertyManager.GetReturns(fmt.Sprintf("%d", graceTime), nil)
+				propertyManager.GetReturns(fmt.Sprintf("%d", graceTime), true)
 			})
 
 			It("returns the parsed duration", func() {
@@ -1254,7 +1253,7 @@ var _ = Describe("Gardener", func() {
 
 		Context("when getting the grace time fails (i.e. property not found)", func() {
 			BeforeEach(func() {
-				propertyManager.GetReturns("", errors.New("nope"))
+				propertyManager.GetReturns("", false)
 			})
 
 			It("returns no grace time", func() {
