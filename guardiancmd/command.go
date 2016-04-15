@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/cloudfoundry-incubator/garden-shed/distclient"
 	"github.com/nu7hatch/gouuid"
 	"github.com/opencontainers/runtime-spec/specs-go"
 
+	"github.com/cloudfoundry-incubator/garden-shed/distclient"
 	quotaed_aufs "github.com/cloudfoundry-incubator/garden-shed/docker_drivers/aufs"
 	"github.com/cloudfoundry-incubator/garden-shed/layercake"
 	"github.com/cloudfoundry-incubator/garden-shed/layercake/cleaner"
@@ -270,8 +270,15 @@ func (cmd *GuardianCommand) wireUidGenerator() gardener.UidGeneratorFunc {
 }
 
 func (cmd *GuardianCommand) wireStarter(logger lager.Logger, ipt *iptables.IPTables, allowHostAccess bool, nicPrefix string, denyNetworks []string) []gardener.Starter {
+	var cgroupsMountpoint string
+	if cmd.Server.Tag != "" {
+		cgroupsMountpoint = filepath.Join(os.TempDir(), fmt.Sprintf("cgroups-%s", cmd.Server.Tag))
+	} else {
+		cgroupsMountpoint = "/sys/fs/cgroup"
+	}
+
 	return []gardener.Starter{
-		rundmc.NewStarter(logger, mustOpen("/proc/cgroups"), mustOpen("/proc/self/cgroup"), path.Join(os.TempDir(), fmt.Sprintf("cgroups-%s", cmd.Server.Tag)), linux_command_runner.New()),
+		rundmc.NewStarter(logger, mustOpen("/proc/cgroups"), mustOpen("/proc/self/cgroup"), cgroupsMountpoint, linux_command_runner.New()),
 		iptables.NewStarter(ipt, allowHostAccess, nicPrefix, denyNetworks),
 	}
 }
@@ -300,7 +307,7 @@ func (cmd *GuardianCommand) wireNetworker(
 		log.Fatal("invalid pool range", err)
 	}
 
-	return kawasaki.New(
+	kawasakiNetworker := kawasaki.New(
 		kawasakiBin,
 		kawasaki.SpecParserFunc(kawasaki.ParseSpec),
 		subnets.NewPool(networkPoolCIDR),
@@ -309,8 +316,12 @@ func (cmd *GuardianCommand) wireNetworker(
 		portPool,
 		iptables.NewPortForwarder(ipt),
 		iptables.NewFirewallOpener(ipt),
-		networkHookers,
 	)
+
+	return &kawasaki.CompositeNetworker{
+		Networker:  kawasakiNetworker,
+		ExtraHooks: networkHookers,
+	}
 }
 
 func (cmd *GuardianCommand) wireVolumeCreator(logger lager.Logger, graphRoot string, insecureRegistries, persistentImages []string) gardener.VolumeCreator {
@@ -369,19 +380,22 @@ func (cmd *GuardianCommand) wireVolumeCreator(logger lager.Logger, graphRoot str
 		}
 	}
 
-	repoFetcher := &repository_fetcher.CompositeFetcher{
-		LocalFetcher: &repository_fetcher.Local{
-			Cake:              cake,
-			DefaultRootFSPath: cmd.Containers.DefaultRootFSDir.Path(),
-			IDProvider:        repository_fetcher.LayerIDProvider{},
+	repoFetcher := repository_fetcher.Retryable{
+		RepositoryFetcher: &repository_fetcher.CompositeFetcher{
+			LocalFetcher: &repository_fetcher.Local{
+				Cake:              cake,
+				DefaultRootFSPath: cmd.Containers.DefaultRootFSDir.Path(),
+				IDProvider:        repository_fetcher.LayerIDProvider{},
+			},
+			RemoteFetcher: repository_fetcher.NewRemote(
+				logger,
+				cmd.Docker.Registry,
+				cake,
+				distclient.NewDialer(insecureRegistries),
+				repository_fetcher.VerifyFunc(repository_fetcher.Verify),
+			),
 		},
-		RemoteFetcher: repository_fetcher.NewRemote(
-			logger,
-			cmd.Docker.Registry,
-			cake,
-			distclient.NewDialer(insecureRegistries),
-			repository_fetcher.VerifyFunc(repository_fetcher.Verify),
-		),
+		Logger: logger,
 	}
 
 	rootFSNamespacer := &rootfs_provider.UidNamespacer{
@@ -477,6 +491,15 @@ func (cmd *GuardianCommand) wireContainerizer(log lager.Logger, depotPath, iodae
 		return &i
 	}
 
+	var worldReadWrite os.FileMode = 0666
+	fuseDevice := specs.Device{
+		Path:     "/dev/fuse",
+		Type:     "c",
+		Major:    10,
+		Minor:    229,
+		FileMode: &worldReadWrite,
+	}
+
 	denyAll := specs.DeviceCgroup{Allow: false, Access: &rwm}
 	allowedDevices := []specs.DeviceCgroup{
 		{Access: &rwm, Type: &character, Major: majorMinor(1), Minor: majorMinor(3), Allow: true},
@@ -485,6 +508,8 @@ func (cmd *GuardianCommand) wireContainerizer(log lager.Logger, depotPath, iodae
 		{Access: &rwm, Type: &character, Major: majorMinor(1), Minor: majorMinor(9), Allow: true},
 		{Access: &rwm, Type: &character, Major: majorMinor(1), Minor: majorMinor(5), Allow: true},
 		{Access: &rwm, Type: &character, Major: majorMinor(1), Minor: majorMinor(7), Allow: true},
+		{Access: &rwm, Type: &character, Major: majorMinor(1), Minor: majorMinor(7), Allow: true},
+		{Access: &rwm, Type: &character, Major: majorMinor(fuseDevice.Major), Minor: majorMinor(fuseDevice.Minor), Allow: true},
 	}
 
 	baseProcess := specs.Process{
@@ -497,6 +522,7 @@ func (cmd *GuardianCommand) wireContainerizer(log lager.Logger, depotPath, iodae
 		WithNamespaces(PrivilegedContainerNamespaces...).
 		WithResources(&specs.Resources{Devices: append([]specs.DeviceCgroup{denyAll}, allowedDevices...)}).
 		WithRootFS(defaultRootFSPath).
+		WithDevices(fuseDevice).
 		WithProcess(baseProcess)
 
 	unprivilegedBundle := baseBundle.
